@@ -123,7 +123,8 @@ async function migrate(env) {
   if (migrated) return; migrated = true;
   const stmts = ["ALTER TABLE media ADD COLUMN data TEXT", "ALTER TABLE media ADD COLUMN status TEXT DEFAULT 'pending'",
     "ALTER TABLE bookings ADD COLUMN pm_checkout TEXT", "ALTER TABLE bookings ADD COLUMN pm_payment TEXT", "ALTER TABLE bookings ADD COLUMN guide_paid REAL DEFAULT 0",
-    "CREATE TABLE IF NOT EXISTS resets(token TEXT PRIMARY KEY, user_id INTEGER, expires INTEGER)", "ALTER TABLE media ADD COLUMN size INTEGER DEFAULT 0"];
+    "CREATE TABLE IF NOT EXISTS resets(token TEXT PRIMARY KEY, user_id INTEGER, expires INTEGER)", "ALTER TABLE media ADD COLUMN size INTEGER DEFAULT 0",
+    "CREATE TABLE IF NOT EXISTS signals(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER, sender_id INTEGER, type TEXT, data TEXT, created INTEGER)"];
   for (const q of stmts) await env.DB.prepare(q).run().catch(() => {}); // ignore 'duplicate column'
 }
 
@@ -358,7 +359,30 @@ export async function onRequest({ request: req, env, params }) {
         if ((body.body || '').trim()) await env.DB.prepare('INSERT INTO messages(booking_id,sender_id,body) VALUES(?,?,?)').bind(id, u.id, body.body.slice(0, 2000)).run();
       }
       const m = await env.DB.prepare('SELECT sender_id,body,created_at FROM messages WHERE booking_id=? ORDER BY id').bind(id).all();
-      return J({ messages: m.results.map(x => ({ ...x, mine: x.sender_id === u.id })), meet: `https://meet.jit.si/tourguyed-${id}-${b.tourist_id * 7919 + b.guide_id}` });
+      return J({ messages: m.results.map(x => ({ ...x, mine: x.sender_id === u.id })) });
+    }
+    // ---------- in-app video call (WebRTC signaling via D1) ----------
+    if (route === 'GET /call/:id' || route === 'POST /call/:id') {
+      const b = await env.DB.prepare("SELECT * FROM bookings WHERE id=? AND status IN('accepted','in_progress','completed')").bind(id).first();
+      if (!b || (b.guide_id !== u.id && b.tourist_id !== u.id)) return err('Video call opens once the guide accepts', 403);
+      if (M === 'POST') {
+        if (!['join', 'offer', 'answer', 'ice', 'bye'].includes(body.type)) return err('Bad signal');
+        await env.DB.prepare('DELETE FROM signals WHERE created<?').bind(Date.now() - 15 * 60e3).run();
+        const r = await env.DB.prepare('INSERT INTO signals(booking_id,sender_id,type,data,created) VALUES(?,?,?,?,?)').bind(id, u.id, body.type, JSON.stringify(body.data ?? null).slice(0, 20000), Date.now()).run();
+        if (body.type === 'join') { const other = u.id === b.guide_id ? b.tourist_id : b.guide_id; await notify(env, other, 'Video call waiting on TourGuyed', `${u.name} is waiting for you in the video call for booking #${id}.`); }
+        return J({ id: r.meta.last_row_id });
+      }
+      const since = +url.searchParams.get('since') || 0;
+      const rows = await env.DB.prepare('SELECT id,type,data FROM signals WHERE booking_id=? AND sender_id!=? AND id>? ORDER BY id').bind(id, u.id, since).all();
+      return J({ role: u.id === b.guide_id ? 'guide' : 'tourist', signals: rows.results.map(x => ({ ...x, data: JSON.parse(x.data) })) });
+    }
+    if (route === 'GET /ice') {
+      const ice = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
+      if (env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN) {
+        const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate`, { method: 'POST', headers: { authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ ttl: 7200 }) }).catch(() => null);
+        if (r?.ok) { const d = await r.json(); if (d.iceServers) ice.push(d.iceServers); }
+      }
+      return J({ iceServers: ice });
     }
     if (route === 'POST /reviews' && u.role === 'tourist') {
       const b = await env.DB.prepare("SELECT * FROM bookings WHERE id=? AND tourist_id=? AND status='completed'").bind(body.booking_id, u.id).first();

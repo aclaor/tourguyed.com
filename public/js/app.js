@@ -138,19 +138,73 @@ const views = {
     const { bookings } = await api('/bookings'), open = bookings.filter(b => ['accepted', 'in_progress', 'completed'].includes(b.status));
     const isG = ME.user.role === 'guide'; let cur = +(qs().b) || open[0]?.id;
     V().innerHTML = `<h1>Messages</h1>${open.length ? `<div class="chat"><div class="list">${open.map(b => `<div data-b="${b.id}" class="${b.id === cur ? 'on' : ''}"><b>${esc(isG ? b.tourist_contact : b.guide_name)}</b><br><small class="muted">${b.day} ${b.slot}</small></div>`).join('')}</div>
-      <div class="msgs"><div style="padding:10px;border-bottom:2px solid var(--ink);display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" id="meet" target="_blank">Meet online (video)</a>
+      <div class="msgs"><div style="padding:10px;border-bottom:2px solid var(--ink);display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" id="meet">📹 Start video call</a>
       ${!isG ? '<button class="btn ghost sm" id="blk">Block this guide</button>' : ''}</div><div class="log" id="log"></div>
       <form id="mf"><input id="mi" placeholder="Write a message…" autocomplete="off"><button class="btn">Send</button></form></div></div>` : '<p class="muted">Chat opens once a tourguide accepts a booking.</p>'}`;
     if (!open.length) return;
     const load = async (send) => {
       const d = await api('/messages/' + cur, send ? { method: 'POST', body: { body: send } } : {});
       $('#log').innerHTML = d.messages.map(m => `<div class="bubble ${m.mine ? 'me' : ''}">${esc(m.body)}</div>`).join('') || '<p class="muted">Say hi 👋</p>';
-      $('#log').scrollTop = 1e9; $('#meet').href = d.meet;
+      $('#log').scrollTop = 1e9; $('#meet').href = '#/call?b=' + cur;
     };
     document.querySelectorAll('.list div').forEach(el => el.onclick = () => { location.hash = '#/messages?b=' + el.dataset.b; });
     $('#mf').onsubmit = async e => { e.preventDefault(); const v = $('#mi').value; $('#mi').value = ''; try { await load(v) } catch (er) { toast(er.message) } };
     $('#blk') && ($('#blk').onclick = async () => { const b = open.find(x => x.id === cur); await api('/block', { method: 'POST', body: { guide_id: b.guide_id } }); toast('Guide blocked from messaging you'); });
     await load(); clearInterval(window._poll); window._poll = setInterval(() => location.hash.startsWith('#/messages') ? load().catch(() => {}) : clearInterval(window._poll), 5000);
+  },
+
+  async call() {
+    if (!need()) return; const bid = qs().b;
+    V().innerHTML = `<h1>Video call</h1><div class="panel" style="padding:12px">
+      <div style="position:relative;background:#06161d;border-radius:18px;overflow:hidden;aspect-ratio:16/9;max-height:70vh">
+        <video id="rv" autoplay playsinline style="width:100%;height:100%;object-fit:cover"></video>
+        <div id="cs" style="position:absolute;inset:0;display:grid;place-items:center;color:#fff;text-align:center;padding:20px">Starting camera…</div>
+        <video id="lv" autoplay playsinline muted style="position:absolute;right:12px;bottom:12px;width:24%;min-width:110px;border-radius:12px;border:2px solid #fff;transform:scaleX(-1)"></video></div>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap">
+        <button class="btn ghost" id="bm">🎤 Mute</button><button class="btn ghost" id="bc">📷 Camera off</button><button class="btn" style="background:#d9534f;border-color:#d9534f" id="bh">Leave call</button></div>
+      <p class="muted" style="text-align:center;margin-top:10px;font-size:13px">The other person gets a notice. Keep this page open — the call connects when they join.</p></div>`;
+    const st = t => $('#cs') && ($('#cs').innerHTML = t);
+    let stream; try { stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: true }); }
+    catch { try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { return st('⚠ Please allow camera/microphone access in your browser, then reload this page.'); } }
+    $('#lv').srcObject = stream;
+    const { iceServers } = await api('/ice').catch(() => ({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }));
+    const send = (type, data) => api('/call/' + bid, { method: 'POST', body: { type, data } });
+    let pc = null, gen = 0, pending = [], since = 0, role, alive = true;
+    const newPc = g => {
+      pc && pc.close(); pending = []; gen = g;
+      pc = new RTCPeerConnection({ iceServers }); stream.getTracks().forEach(t => pc.addTrack(t, stream));
+      pc.onicecandidate = e => e.candidate && send('ice', { gen, c: e.candidate });
+      pc.ontrack = e => { $('#rv').srcObject = e.streams[0]; st(''); };
+      pc.onconnectionstatechange = () => { const s = pc.connectionState; if (s === 'connected') st(''); if (s === 'failed') st('Connection failed — your networks may block direct calls. Try again, or switch to mobile data.'); if (s === 'disconnected') st('Reconnecting…'); };
+      return pc;
+    };
+    const offer = async () => { const p = newPc(Date.now()); await p.setLocalDescription(await p.createOffer()); await send('offer', { gen, sdp: p.localDescription }); };
+    const j = await send('join'); since = j.id - 1;
+    const first = await api(`/call/${bid}?since=${since}`); role = first.role;
+    st(role === 'guide' ? 'Waiting for the tourist to join…' : 'Waiting for your tourguide to join…');
+    if (role === 'guide') await offer();
+    const handle = async sig => {
+      const d = sig.data;
+      if (sig.type === 'join' && role === 'guide') return offer();
+      if (sig.type === 'join' && role === 'tourist') return; // guide will send a fresh offer
+      if (sig.type === 'offer' && role === 'tourist') { const p = newPc(d.gen); await p.setRemoteDescription(d.sdp); await p.setLocalDescription(await p.createAnswer()); await send('answer', { gen: d.gen, sdp: p.localDescription }); for (const c of pending) await p.addIceCandidate(c).catch(() => {}); pending = []; return; }
+      if (sig.type === 'answer' && role === 'guide' && d.gen === gen && pc.signalingState === 'have-local-offer') { await pc.setRemoteDescription(d.sdp); for (const c of pending) await pc.addIceCandidate(c).catch(() => {}); pending = []; return; }
+      if (sig.type === 'ice' && d.gen === gen) { if (pc?.remoteDescription) await pc.addIceCandidate(d.c).catch(() => {}); else pending.push(d.c); return; }
+      if (sig.type === 'bye') { $('#rv').srcObject = null; st('The other person left the call.'); }
+    };
+    const loop = async () => {
+      while (alive && location.hash.startsWith('#/call')) {
+        try { const r = await api(`/call/${bid}?since=${since}`); for (const sig of r.signals) { since = sig.id; await handle(sig); } } catch (e) { st('⚠ ' + e.message); }
+        await new Promise(r => setTimeout(r, pc?.connectionState === 'connected' ? 4000 : 1200));
+      }
+      end();
+    };
+    const end = () => { if (!alive) return; alive = false; send('bye').catch(() => {}); pc && pc.close(); stream.getTracks().forEach(t => t.stop()); };
+    $('#bm').onclick = () => { const a = stream.getAudioTracks()[0]; if (!a) return; a.enabled = !a.enabled; $('#bm').textContent = a.enabled ? '🎤 Mute' : '🔇 Unmute'; };
+    $('#bc').onclick = () => { const v = stream.getVideoTracks()[0]; if (!v) return; v.enabled = !v.enabled; $('#bc').textContent = v.enabled ? '📷 Camera off' : '📷 Camera on'; };
+    $('#bh').onclick = () => { end(); location.hash = '#/messages?b=' + bid; };
+    window.addEventListener('beforeunload', end, { once: true });
+    loop();
   },
   async profile() {
     if (!need()) return;
@@ -349,7 +403,7 @@ function bookingTable(list) {
       if (b.status === 'completed' && !b.reviewed) a.push(B('rate', 'Rate guide'));
       if (b.status === 'completed') a.push(`<a class="btn sm ghost" href="#/guide/${b.guide_id}">Book again</a>`);
     }
-    if (['accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`);
+    if (['accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`, `<a class="btn sm ghost" href="#/call?b=${b.id}">📹 Video</a>`);
     return `<tr><td>${b.day} ${b.slot}${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
       <td>${peso(b.amount)}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td>
       <td><span class="status s-${b.status}">${b.status.replace('_', ' ')}</span>${b.decline_reason ? `<br><small>${esc(b.decline_reason)}</small>` : ''}</td><td style="display:flex;gap:6px;flex-wrap:wrap">${a.join('')}</td></tr>`;
