@@ -155,7 +155,7 @@ const views = {
   async profile() {
     if (!need()) return;
     const idBox = `<div class="panel"><h3>Identity verification</h3><p class="muted">Status: <b>${{ none: 'not uploaded yet', pending: 'uploaded — waiting for review', verified: '✓ verified', rejected: 'rejected — please upload a clearer photo' }[ME.user.id_status] || ME.user.id_status}</b>. Your ID is stored privately and never shown to ${ME.user.role === 'guide' ? 'tourists' : 'guides'} — they only see a verified badge.</p>
-      <label>Government or school ID <span class="req">*</span></label><input type="file" id="idf" accept="image/*"><button class="btn sm" style="margin-top:8px" id="idb">Upload ID</button></div>`;
+      <label>Government or school ID <span class="req">*</span></label><input type="file" id="idf" accept="image/*${ME.user.storage === 'r2' ? ',application/pdf' : ''}"><button class="btn sm" style="margin-top:8px" id="idb">Upload ID</button></div>`;
     if (ME.user.role === 'tourist') { V().innerHTML = '<h1>Verify ID</h1>' + idBox + `<p class="muted">Guides contact you via your private relay address: ${esc(ME.user.relay)}</p>
       <div class="panel"><h3>Want to be a tourguide?</h3><p class="muted">Switch this account to a tourguide account. Keep the same email and password, then set up your places, package and verification.</p><button class="btn" style="margin-top:12px" id="bg">Become a tourguide</button></div>`;
       $('#bg').onclick = async () => { if (!confirm('Switch this account to a tourguide account? You will no longer book tours with this account.')) return; try { await api('/become-guide', { method: 'POST' }); await loadMe(); toast('You are now a tourguide — set up your profile'); location.hash = '#/profile'; route(); } catch (e) { toast(e.message) } };
@@ -183,7 +183,7 @@ const views = {
       <label style="font-weight:400"><input type="checkbox" id="offers_local" ${g.offers_local ? 'checked' : ''}> I can arrange other local guides</label>
       <label>Wise account email (for payouts) ${R}</label><input id="wise_email" type="email" required value="${esc(g.wise_email)}"></div></div>
       <button class="btn" style="margin-top:16px" id="save">Save profile</button></div>
-      <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically; videos must be under 1MB for now.</p><input type="file" id="mf" accept="video/*,image/*" multiple><button class="btn sm" style="margin-top:8px" id="mb">Upload</button></div>`;
+      <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically. ${ME.user.storage === 'r2' ? 'Videos up to 50MB, max 30 uploads.' : 'Videos must be under 1MB for now.'}</p><input type="file" id="mf" accept="video/*,image/*" multiple><button class="btn sm" style="margin-top:8px" id="mb">Upload</button></div>`;
     wireId();
     const stu = () => { const on = $('#is_student').value === '1'; $('#stu').style.display = on ? '' : 'none'; $('#school').required = on; }; $('#is_student').onchange = stu; stu();
     $('#pf').onchange = async () => { try { await upload('profile', $('#pf').files[0]); await loadMe(); toast('Profile photo updated'); route(); } catch (e) { toast(e.message) } };
@@ -199,7 +199,9 @@ const views = {
         places: list('places'), activities: list('activities'), languages: list('languages'), includes: list('includes'), excludes: list('excludes') };
       try { await api('/guide/profile', { method: 'PUT', body }); if ($('#schf').files[0]) await upload('school', $('#schf').files[0]); await loadMe(); toast('Profile saved'); } catch (e) { toast(e.message) }
     };
-    $('#mb').onclick = async () => { if (!$('#mf').files.length) return toast('Choose photos or videos first'); try { for (const f of $('#mf').files) await upload(f.type.startsWith('video') ? 'video' : 'photo', f); toast('Uploaded — TourGuyed will review them shortly'); $('#mf').value = ''; } catch (e) { toast(e.message) } };
+    $('#mb').onclick = async () => { const fs = [...$('#mf').files]; if (!fs.length) return toast('Choose photos or videos first'); $('#mb').disabled = true;
+      try { for (const [i, f] of fs.entries()) { $('#mb').textContent = `Uploading ${i + 1}/${fs.length}…`; await upload(f.type.startsWith('video') ? 'video' : 'photo', f); } toast('Uploaded — TourGuyed will review them shortly'); $('#mf').value = ''; } catch (e) { toast(e.message) }
+      $('#mb').disabled = false; $('#mb').textContent = 'Upload'; };
   },
   async availability() {
     if (!need('guide')) return;
@@ -229,7 +231,7 @@ const views = {
     const S = (n, t, h) => `<a class="stat" href="${h}" style="text-decoration:none"><b>${n}</b>${t}</a>`;
     V().innerHTML = `<h1>Admin overview</h1><div class="stats">${S(o.pending_ids, 'IDs to verify', '#/admin-verify')}${S(o.pending_media, 'Photos/videos to review', '#/admin-verify')}${S(o.open_tickets, 'Open tickets', '#/admin-tickets')}${S(o.bookings, 'Bookings', '#/admin-bookings')}</div>
       <div class="stats">${S(o.tourists, 'Tourists', '#/admin-users')}${S(o.guides, 'Tourguides', '#/admin-users')}${S(peso(o.fees_earned), 'Platform fees (completed)', '#/admin-bookings')}${S(peso(o.cash_fees_due), 'Cash fees still owed', '#/admin-bookings')}</div>
-      <div class="stats">${S(peso(o.payouts_due), 'To pay guides (Wise)', '#/admin-payouts')}</div>
+      <div class="stats">${S(peso(o.payouts_due), 'To pay guides (Wise)', '#/admin-payouts')}${S((o.storage_used / 1024 ** 3).toFixed(2) + ' GB', o.storage === 'r2' ? 'of 9 GB free storage used (R2)' : 'stored in database (R2 off)', '#/admin-verify')}</div>
       ${o.online_enabled ? '' : '<div class="panel">⚠ Online payments are off. Add PAYMONGO_SECRET_KEY to the Worker settings to turn them on.</div>'}`;
   },
   async 'admin-verify'() {
@@ -297,11 +299,20 @@ async function shrinkImage(f, max = 1600, q = 0.82) {
   return c.toDataURL('image/jpeg', q);
 }
 async function upload(kind, f) {
-  if (f.size > 50e6) throw new Error('File is too big');
+  if (!f) throw new Error('Choose a file first');
+  const isImg = f.type.startsWith('image/'), isVid = f.type.startsWith('video/');
+  if (ME?.user.storage === 'r2') {
+    // direct upload to Cloudflare R2: photos are resized first, videos up to 50MB
+    let blob = f, name = f.name;
+    if (isImg) { blob = await (await fetch(await shrinkImage(f, 2000, 0.85))).blob(); name = f.name.replace(/\.\w+$/, '') + '.jpg'; }
+    if (isVid && f.size > 50 * 1024 ** 2) throw new Error('Videos must be under 50MB — trim it a little');
+    const r = await fetch(`/api/upload?kind=${kind}&name=${encodeURIComponent(name)}`, { method: 'PUT', headers: { 'content-type': blob.type || f.type, authorization: 'Bearer ' + localStorage.tg }, body: blob });
+    const d = await r.json().catch(() => ({ error: 'Upload failed' })); if (!r.ok) throw new Error(d.error || 'Upload failed'); return d;
+  }
   let dataUrl;
-  if (f.type.startsWith('image/')) { dataUrl = await shrinkImage(f); if (dataUrl.length > 1.8e6) dataUrl = await shrinkImage(f, 1100, 0.7); }
-  else { if (f.size > 1.3e6) throw new Error(f.type.startsWith('video') ? 'Videos must be under 1MB for now — trim it or upload photos instead' : 'File must be under 1MB — take a photo of it instead'); dataUrl = await fileToDataUrl(f); }
-  return api('/upload', { method: 'POST', body: { kind, name: f.name.replace(/\.\w+$/, '') + (f.type.startsWith('image/') ? '.jpg' : ''), dataUrl } });
+  if (isImg) { dataUrl = await shrinkImage(f); if (dataUrl.length > 1.8e6) dataUrl = await shrinkImage(f, 1100, 0.7); }
+  else { if (f.size > 1.3e6) throw new Error(isVid ? 'Videos must be under 1MB for now — trim it or upload photos instead' : 'File must be under 1MB — take a photo of it instead'); dataUrl = await fileToDataUrl(f); }
+  return api('/upload', { method: 'POST', body: { kind, name: f.name.replace(/\.\w+$/, '') + (isImg ? '.jpg' : ''), dataUrl } });
 }
 function wireId() { $('#idb').onclick = async () => { const f = $('#idf').files[0]; if (!f) return toast('Choose a photo of your ID first'); $('#idb').disabled = true; $('#idb').textContent = 'Uploading…'; try { await upload('id', f); await loadMe(); toast('ID uploaded — we will review it shortly'); route(); } catch (e) { toast(e.message); $('#idb').disabled = false; $('#idb').textContent = 'Upload ID'; } }; }
 
