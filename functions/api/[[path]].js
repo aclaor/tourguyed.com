@@ -107,7 +107,7 @@ export async function onRequest({ request: req, env, params }) {
       const { role, email, password, name } = body;
       if (!['tourist', 'guide'].includes(role) || !email || !name || (password || '').length < 8) return err('Name, email, role and 8+ char password required');
       const r = await env.DB.prepare('INSERT INTO users(role,email,name,pass) VALUES(?,?,?,?)').bind(role, email.toLowerCase(), name, await hash(password)).run().catch(() => null);
-      if (!r) return err('Email already registered');
+      if (!r) return err('This email already has an account. Sign in instead — tourists can switch to a tourguide account from Verify ID.');
       const uid = r.meta.last_row_id;
       if (role === 'guide') await env.DB.prepare('INSERT INTO guides(user_id,invited_by) VALUES(?,?)').bind(uid, body.invited_by || null).run();
       return J({ token: await session(env, uid) });
@@ -170,6 +170,12 @@ export async function onRequest({ request: req, env, params }) {
     if (route === 'GET /me') {
       const g = u.role === 'guide' ? await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(u.id).first() : null;
       return J({ user: { id: u.id, role: u.role, name: u.name, email: u.email, id_status: u.id_status, relay: relayEmail(u) }, guide: g && { ...shapeGuide(g), wise_email: g.wise_email } });
+    }
+    if (route === 'POST /become-guide' && u.role === 'tourist') {
+      const active = await env.DB.prepare("SELECT COUNT(*) n FROM bookings WHERE tourist_id=? AND status IN('requested','accepted','in_progress')").bind(u.id).first();
+      if (active.n) return err('Please finish or cancel your upcoming tours as a tourist first');
+      await env.DB.batch([env.DB.prepare("UPDATE users SET role='guide' WHERE id=?").bind(u.id), env.DB.prepare('INSERT OR IGNORE INTO guides(user_id) VALUES(?)').bind(u.id)]);
+      return J({ ok: 1 });
     }
     if (route === 'POST /logout') { await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(u.id).run(); return J({ ok: 1 }); }
 

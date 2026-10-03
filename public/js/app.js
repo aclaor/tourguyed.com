@@ -21,7 +21,7 @@ function renderMenu() {
   const items = !ME ? [['#/start', 'Get started'], ['#/guides', 'Browse guides'], ['#/login', 'Sign in'], ['#/signup', 'Sign up']]
     : r === 'admin' ? [['#/admin', 'Overview'], ['#/admin-verify', 'Verify IDs & media'], ['#/admin-chats', 'All messages'], ['#/admin-tickets', 'Support tickets'], ['#/admin-users', 'Users'], ['#/admin-bookings', 'Bookings & fees'], ['#/admin-payouts', 'Guide payouts']]
     : r === 'guide' ? [['#/dashboard', 'Dashboard'], ['#/bookings', 'Bookings'], ['#/messages', 'Messages'], ['#/availability', 'Availability'], ['#/profile', 'My profile & package'], ['#/invite', 'Invite guides'], ['#/support', 'Customer service']]
-    : [['#/dashboard', 'Dashboard'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID'], ['#/support', 'Customer service']];
+    : [['#/dashboard', 'Dashboard'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID / Become a guide'], ['#/support', 'Customer service']];
   $('#menu').innerHTML = items.map(([h, t]) => `<a class="item ${cur === h ? 'on' : ''}" href="${h}">${t}</a>`).join('');
   $('#who').innerHTML = ME ? `${esc(ME.user.name)} · ${r === 'guide' ? 'Tourguide' : r === 'admin' ? 'Admin' : 'Tourist'}<br><a href="#" onclick="logout();return false" style="color:inherit">Sign out</a>` : '';
 }
@@ -153,7 +153,10 @@ const views = {
     if (!need()) return;
     const idBox = `<div class="panel"><h3>Identity verification</h3><p class="muted">Status: <b>${ME.user.id_status}</b>. Your ID is stored privately and never shown to ${ME.user.role === 'guide' ? 'tourists' : 'guides'} — they only see a verified badge.</p>
       <label>Government or school ID</label><input type="file" id="idf" accept="image/*,application/pdf"><button class="btn sm" style="margin-top:8px" id="idb">Upload ID</button></div>`;
-    if (ME.user.role === 'tourist') { V().innerHTML = '<h1>Verify ID</h1>' + idBox + `<p class="muted">Guides contact you via your private relay address: ${esc(ME.user.relay)}</p>`; return wireId(); }
+    if (ME.user.role === 'tourist') { V().innerHTML = '<h1>Verify ID</h1>' + idBox + `<p class="muted">Guides contact you via your private relay address: ${esc(ME.user.relay)}</p>
+      <div class="panel"><h3>Want to be a tourguide?</h3><p class="muted">Switch this account to a tourguide account. Keep the same email and password, then set up your places, package and verification.</p><button class="btn" style="margin-top:12px" id="bg">Become a tourguide</button></div>`;
+      $('#bg').onclick = async () => { if (!confirm('Switch this account to a tourguide account? You will no longer book tours with this account.')) return; try { await api('/become-guide', { method: 'POST' }); await loadMe(); toast('You are now a tourguide — set up your profile'); location.hash = '#/profile'; route(); } catch (e) { toast(e.message) } };
+      return wireId(); }
     const g = ME.guide, L = a => (a || []).join(', ');
     V().innerHTML = `<h1>My profile & package</h1>${idBox}<div class="panel"><div class="two" style="gap:16px;align-items:start"><div>
       <label>Profile photo URL</label><input id="photo" value="${esc(g.photo)}"><label>Short bio</label><textarea id="bio" rows="3">${esc(g.bio)}</textarea>
