@@ -75,7 +75,7 @@ const views = {
       <div><label>Student</label><select id="student"><option value="">Either</option><option value="yes" ${q.student === 'yes' ? 'selected' : ''}>Students only</option><option value="no" ${q.student === 'no' ? 'selected' : ''}>Non-students</option></select></div>
       <button class="btn" id="f">Filter</button></div>
       <p class="muted" style="margin-bottom:14px">${d.guides.length} guide(s) online · ranked by ratings and acceptance</p>
-      <div class="grid3">${d.guides.map(g => `<div class="card"><div class="pic"><img src="${esc(g.photo)}" alt="${esc(g.name)}">${g.verified ? `<span class="badge">✓ Verified</span>` : ""}</div><div class="body">
+      <div class="grid3">${d.guides.map(g => `<div class="card"><div class="pic"><img src="${esc(g.photo)}" alt="${esc(g.name)}">${g.verified ? `<span class="badge">✓ Verified</span>` : `<span class="badge" style="background:#5d7f88">Verification pending</span>`}</div><div class="body">
         <h3>${esc(g.name)}</h3>
         <p class="muted">${g.is_student ? '🎓 ' + esc(g.school) : esc(g.occupation)} · ${esc(g.location)}</p>
         <p class="stars">★ ${g.rating} <span class="muted">(${g.reviews} surveys) · ${g.acceptance}% acceptance</span></p>
@@ -109,7 +109,7 @@ const views = {
     const feeDue = b.filter(x => x.pay_method === 'cash' && x.status === 'completed' && x.payout_status === 'cash_due').reduce((s, x) => s + x.platform_fee, 0);
     V().innerHTML = `<h1>Hello, ${esc(ME.user.name.split(' ')[0])}</h1>
      ${!isG && ME.user.id_status === 'none' ? '<div class="panel">⚠ Upload your ID before booking. <a href="#/profile">Verify now</a></div>' : ''}
-     ${isG && !ME.guide.price ? '<div class="panel">⚠ Finish your profile & package so tourists can find you. <a href="#/profile">Set up profile</a></div>' : ''}
+     ${isG && !ME.guide.price ? '<div class="panel">⚠ Finish your profile & set a package price so tourists can find you. <a href="#/profile">Set up profile</a></div>' : ''}${isG && !ME.guide.verified ? '<div class="panel">⏳ Your ID verification is pending. You still appear in search with a "pending" badge. Upload your ID in <a href="#/profile">My profile</a>.</div>' : ''}${isG ? '<div class="panel">📅 Tourists can only book times you open in <a href="#/availability">Availability</a>.</div>' : ''}
      <div class="stats">${isG ? `<div class="stat"><b>${b.filter(x => x.status === 'requested').length}</b>New requests</div><div class="stat"><b>★ ${ME.guide.rating}</b>${ME.guide.reviews} surveys</div>
        <div class="stat"><b>${ME.guide.acceptance}%</b>Acceptance rate</div><div class="stat"><b>${peso(earned)}</b>Earned (after 20%)</div>`
       : `<div class="stat"><b>${up.length}</b>Upcoming tours</div><div class="stat"><b>${done.length}</b>Completed</div><div class="stat"><b>${ME.user.id_status}</b>ID status</div><div class="stat"><b>${new Set(b.map(x => x.guide_id)).size}</b>Guides used</div>`}</div>
@@ -120,12 +120,12 @@ const views = {
   async bookings() { if (!need()) return; const { bookings } = await api('/bookings'); V().innerHTML = '<h1>Bookings</h1>' + bookingTable(bookings); wireBookingActions(); },
   async messages() {
     if (!need()) return;
-    const { bookings } = await api('/bookings'), open = bookings.filter(b => ['accepted', 'in_progress', 'completed'].includes(b.status));
+    const { bookings } = await api('/bookings'), open = bookings.filter(b => ['requested', 'accepted', 'in_progress', 'completed'].includes(b.status));
     const isG = ME.user.role === 'guide'; let cur = +(qs().b) || open[0]?.id;
     V().innerHTML = `<h1>Messages</h1>${open.length ? `<div class="chat"><div class="list">${open.map(b => `<div data-b="${b.id}" class="${b.id === cur ? 'on' : ''}"><b>${esc(isG ? b.tourist_contact : b.guide_name)}</b><br><small class="muted">${b.day} ${b.slot}</small></div>`).join('')}</div>
       <div class="msgs"><div style="padding:10px;border-bottom:2px solid var(--ink);display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" id="meet" target="_blank">Meet online (video)</a>
       ${!isG ? '<button class="btn ghost sm" id="blk">Block this guide</button>' : ''}</div><div class="log" id="log"></div>
-      <form id="mf"><input id="mi" placeholder="Write a message…" autocomplete="off"><button class="btn">Send</button></form></div></div>` : '<p class="muted">Chat opens once a tourguide accepts a booking.</p>'}`;
+      <form id="mf"><input id="mi" placeholder="Write a message…" autocomplete="off"><button class="btn">Send</button></form></div></div>` : '<p class="muted">Chat opens once a tourist sends a booking request.</p>'}`;
     if (!open.length) return;
     const load = async (send) => {
       const d = await api('/messages/' + cur, send ? { method: 'POST', body: { body: send } } : {});
@@ -215,7 +215,7 @@ function bookingTable(list) {
       if (b.status === 'completed' && !b.reviewed) a.push(B('rate', 'Rate guide'));
       if (b.status === 'completed') a.push(`<a class="btn sm ghost" href="#/guide/${b.guide_id}">Book again</a>`);
     }
-    if (['accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`);
+    if (['requested', 'accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`);
     return `<tr><td>${b.day} ${b.slot}${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
       <td>${peso(b.amount)}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${b.payout_status}</small></td>
       <td><span class="status s-${b.status}">${b.status.replace('_', ' ')}</span>${b.decline_reason ? `<br><small>${esc(b.decline_reason)}</small>` : ''}</td><td style="display:flex;gap:6px;flex-wrap:wrap">${a.join('')}</td></tr>`;

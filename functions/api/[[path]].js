@@ -63,7 +63,7 @@ export async function onRequest({ request: req, env, params }) {
       return J({ token: await session(env, u.id) });
     }
     if (route === 'GET /guides') {
-      const q = url.searchParams; const where = ['g.verified=1', 'g.price>0']; const b = [];
+      const q = url.searchParams; const where = ['g.price>0']; const b = [];
       if (q.get('place')) { where.push('(g.location LIKE ? OR g.places LIKE ?)'); b.push(`%${q.get('place')}%`, `%${q.get('place')}%`); }
       if (q.get('activity')) { where.push('g.activities LIKE ?'); b.push(`%${q.get('activity')}%`); }
       if (q.get('gender')) { where.push('g.gender=?'); b.push(q.get('gender')); }
@@ -72,7 +72,7 @@ export async function onRequest({ request: req, env, params }) {
       if (q.get('student') === 'no') where.push('g.is_student=0');
       // ranking: ratings + review volume + acceptance rate decide visibility
       const rows = await env.DB.prepare(`SELECT g.*,u.name FROM guides g JOIN users u ON u.id=g.user_id WHERE ${where.join(' AND ')}
-        ORDER BY (g.rating*20 + MIN(g.reviews,200)*0.1 + (CASE WHEN g.accepted+g.declined=0 THEN 100 ELSE g.accepted*100.0/(g.accepted+g.declined) END)*0.3) DESC`).bind(...b).all();
+        ORDER BY g.verified DESC, (g.rating*20 + MIN(g.reviews,200)*0.1 + (CASE WHEN g.accepted+g.declined=0 THEN 100 ELSE g.accepted*100.0/(g.accepted+g.declined) END)*0.3) DESC`).bind(...b).all();
       return J({ guides: rows.results.map(shapeGuide) });
     }
     if (route === 'GET /guides/:id') {
@@ -182,8 +182,8 @@ export async function onRequest({ request: req, env, params }) {
       return J({ ok: 1 });
     }
     if (route === 'GET /messages/:id' || route === 'POST /messages/:id') {
-      const b = await env.DB.prepare("SELECT * FROM bookings WHERE id=? AND status IN('accepted','in_progress','completed')").bind(id).first();
-      if (!b || (b.guide_id !== u.id && b.tourist_id !== u.id)) return err('Chat opens once the guide accepts', 403);
+      const b = await env.DB.prepare("SELECT * FROM bookings WHERE id=? AND status IN('requested','accepted','in_progress','completed')").bind(id).first();
+      if (!b || (b.guide_id !== u.id && b.tourist_id !== u.id)) return err('Chat opens once a booking is requested', 403);
       if (M === 'POST') {
         const blocked = await env.DB.prepare('SELECT 1 FROM blocks WHERE tourist_id=? AND guide_id=?').bind(b.tourist_id, b.guide_id).first();
         if (blocked && u.id === b.guide_id) return err('This tourist has blocked messages from you', 403);
