@@ -11,3 +11,7 @@ not_found_handling = "404-page"
 binding = "DB"
 database_name = "tourguyed-db"
 database_id = "70cbfa62-bcb6-45c3-b518-5e96d6c17514"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "tourguyed-files"
