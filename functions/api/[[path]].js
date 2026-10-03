@@ -37,6 +37,14 @@ function shapeGuide(g) {
   const total = g.accepted + g.declined; g.acceptance = total ? Math.round(g.accepted / total * 100) : 100;
   g.id = g.user_id; delete g.wise_email; return g;
 }
+async function serveFile(env, m) {
+  if (m.data) {
+    const [meta, b64] = m.data.split(',');
+    return new Response(Uint8Array.from(atob(b64), c => c.charCodeAt(0)), { headers: { 'content-type': meta.slice(5).split(';')[0], 'cache-control': 'private, max-age=3600' } });
+  }
+  if (env.FILES) { const o = await env.FILES.get(m.key); if (o) return new Response(o.body, { headers: { 'content-type': o.httpMetadata?.contentType || 'application/octet-stream' } }); }
+  return new Response('File not stored', { status: 404 });
+}
 const minsUntil = b => (new Date(`${b.day}T${b.slot}:00+08:00`) - Date.now()) / 60000;
 
 export async function onRequest({ request: req, env, params }) {
@@ -63,7 +71,7 @@ export async function onRequest({ request: req, env, params }) {
       return J({ token: await session(env, u.id) });
     }
     if (route === 'GET /guides') {
-      const q = url.searchParams; const where = ['g.price>0']; const b = [];
+      const q = url.searchParams; const where = ['g.verified=1', 'g.price>0']; const b = [];
       if (q.get('place')) { where.push('(g.location LIKE ? OR g.places LIKE ?)'); b.push(`%${q.get('place')}%`, `%${q.get('place')}%`); }
       if (q.get('activity')) { where.push('g.activities LIKE ?'); b.push(`%${q.get('activity')}%`); }
       if (q.get('gender')) { where.push('g.gender=?'); b.push(q.get('gender')); }
@@ -87,6 +95,12 @@ export async function onRequest({ request: req, env, params }) {
         (SELECT 1 FROM bookings b WHERE b.guide_id=availability.guide_id AND b.day=availability.day AND b.slot=availability.slot AND b.status IN('requested','accepted'))
         ORDER BY day,slot`).bind(id, today).all();
       return J({ slots: a.results });
+    }
+
+    if (route === 'GET /media/:id') {
+      const m = await env.DB.prepare("SELECT * FROM media WHERE id=? AND status='approved' AND kind IN('photo','video')").bind(id).first();
+      if (!m) return err('Not found', 404);
+      return serveFile(env, m);
     }
 
     // ---------- signed in ----------
@@ -125,7 +139,13 @@ export async function onRequest({ request: req, env, params }) {
         const [meta, b64] = body.dataUrl.split(',');
         await env.FILES.put(key, Uint8Array.from(atob(b64), c => c.charCodeAt(0)), { httpMetadata: { contentType: meta.slice(5).split(';')[0] } });
       }
-      await env.DB.prepare('INSERT INTO media(user_id,kind,key) VALUES(?,?,?)').bind(u.id, kind, key).run();
+      let inline = null;
+      if (!env.FILES) {
+        if (!body.dataUrl) return err('No file');
+        if (body.dataUrl.length > 1400000) return err('File too large (max ~1MB until file storage is enabled). Try a smaller photo.');
+        inline = body.dataUrl;
+      }
+      await env.DB.prepare("INSERT INTO media(user_id,kind,key,data,status) VALUES(?,?,?,?,'pending')").bind(u.id, kind, key, inline).run();
       if (kind === 'id') await env.DB.prepare("UPDATE users SET id_status='pending' WHERE id=?").bind(u.id).run();
       return J({ ok: 1, key });
     }
@@ -182,8 +202,8 @@ export async function onRequest({ request: req, env, params }) {
       return J({ ok: 1 });
     }
     if (route === 'GET /messages/:id' || route === 'POST /messages/:id') {
-      const b = await env.DB.prepare("SELECT * FROM bookings WHERE id=? AND status IN('requested','accepted','in_progress','completed')").bind(id).first();
-      if (!b || (b.guide_id !== u.id && b.tourist_id !== u.id)) return err('Chat opens once a booking is requested', 403);
+      const b = await env.DB.prepare("SELECT * FROM bookings WHERE id=? AND status IN('accepted','in_progress','completed')").bind(id).first();
+      if (!b || (b.guide_id !== u.id && b.tourist_id !== u.id)) return err('Chat opens once the guide accepts', 403);
       if (M === 'POST') {
         const blocked = await env.DB.prepare('SELECT 1 FROM blocks WHERE tourist_id=? AND guide_id=?').bind(b.tourist_id, b.guide_id).first();
         if (blocked && u.id === b.guide_id) return err('This tourist has blocked messages from you', 403);
@@ -212,6 +232,53 @@ export async function onRequest({ request: req, env, params }) {
     if (route === 'POST /invite' && u.role === 'guide') {
       await env.DB.prepare('INSERT INTO invites(guide_id,email) VALUES(?,?)').bind(u.id, body.email).run();
       return J({ ok: 1, link: `${url.origin}/app.html#/start?role=guide&ref=${u.id}` });
+    }
+    // ---------- admin ----------
+    if (p[0] === 'admin') {
+      if (u.role !== 'admin') return err('Admins only', 403);
+      const all = async (sql, ...b) => (await env.DB.prepare(sql).bind(...b).all()).results;
+      if (route === 'GET /admin/overview') {
+        const one = async q => (await env.DB.prepare(q).first()).n;
+        return J({
+          users: await one("SELECT COUNT(*) n FROM users WHERE role!='admin'"), guides: await one("SELECT COUNT(*) n FROM users WHERE role='guide'"),
+          tourists: await one("SELECT COUNT(*) n FROM users WHERE role='tourist'"), pending_ids: await one("SELECT COUNT(*) n FROM media WHERE kind IN('id','school') AND status='pending'"),
+          pending_media: await one("SELECT COUNT(*) n FROM media WHERE kind IN('photo','video') AND status='pending'"), open_tickets: await one("SELECT COUNT(*) n FROM tickets WHERE status='open'"),
+          bookings: await one("SELECT COUNT(*) n FROM bookings"), fees_earned: await one("SELECT COALESCE(SUM(platform_fee),0) n FROM bookings WHERE status='completed'"),
+          cash_fees_due: await one("SELECT COALESCE(SUM(platform_fee),0) n FROM bookings WHERE status='completed' AND payout_status='cash_due'")
+        });
+      }
+      if (route === 'GET /admin/verifications') return J({ items: await all(`SELECT m.id,m.kind,m.status,m.created_at,m.user_id,u.name,u.email,u.role,u.id_status FROM media m JOIN users u ON u.id=m.user_id ORDER BY m.status='pending' DESC, m.id DESC LIMIT 200`) });
+      if (route === 'GET /admin/file/:id') { const m = await env.DB.prepare('SELECT * FROM media WHERE id=?').bind(id).first(); return m ? serveFile(env, m) : err('Not found', 404); }
+      if (route === 'POST /admin/media/:id') {
+        const m = await env.DB.prepare('SELECT * FROM media WHERE id=?').bind(id).first(); if (!m) return err('Not found', 404);
+        const ok = body.decision === 'approve';
+        await env.DB.prepare('UPDATE media SET status=? WHERE id=?').bind(ok ? 'approved' : 'rejected', id).run();
+        if (m.kind === 'id') {
+          await env.DB.prepare('UPDATE users SET id_status=? WHERE id=?').bind(ok ? 'verified' : 'rejected', m.user_id).run();
+          await env.DB.prepare('UPDATE guides SET verified=? WHERE user_id=?').bind(ok ? 1 : 0, m.user_id).run();
+          await notify(env, m.user_id, ok ? 'Your TourGuyed ID is verified' : 'Your TourGuyed ID was not accepted', ok ? 'You are verified!' : `Please upload a clearer ID. ${body.note || ''}`);
+        }
+        if (m.kind === 'school' && ok) await env.DB.prepare('UPDATE guides SET school_permission=1 WHERE user_id=?').bind(m.user_id).run();
+        if (['photo', 'video'].includes(m.kind) && ok) {
+          const g = await env.DB.prepare('SELECT media FROM guides WHERE user_id=?').bind(m.user_id).first();
+          if (g) { const list = arr(g.media); list.push(`/api/media/${id}`); await env.DB.prepare('UPDATE guides SET media=? WHERE user_id=?').bind(JSON.stringify(list), m.user_id).run(); }
+        }
+        return J({ ok: 1 });
+      }
+      if (route === 'GET /admin/conversations') return J({ items: await all(`SELECT b.id,b.day,b.slot,b.status,gu.name guide_name,gu.email guide_email,tu.name tourist_name,tu.email tourist_email,
+          (SELECT COUNT(*) FROM messages m WHERE m.booking_id=b.id) msgs,(SELECT MAX(created_at) FROM messages m WHERE m.booking_id=b.id) last
+          FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id ORDER BY last IS NULL, last DESC, b.id DESC LIMIT 200`) });
+      if (route === 'GET /admin/conversations/:id') return J({ messages: await all(`SELECT m.body,m.created_at,u.name,u.role FROM messages m JOIN users u ON u.id=m.sender_id WHERE m.booking_id=? ORDER BY m.id`, id) });
+      if (route === 'GET /admin/tickets') return J({ items: await all(`SELECT t.*,u.name,u.email,u.role FROM tickets t JOIN users u ON u.id=t.user_id ORDER BY t.status='open' DESC, t.id DESC LIMIT 200`) });
+      if (route === 'POST /admin/tickets/:id') {
+        await env.DB.prepare("UPDATE tickets SET status='resolved' WHERE id=?").bind(id).run();
+        const t = await env.DB.prepare('SELECT user_id,subject FROM tickets WHERE id=?').bind(id).first();
+        if (body.reply && t) await notify(env, t.user_id, 'Re: ' + t.subject, body.reply);
+        return J({ ok: 1 });
+      }
+      if (route === 'GET /admin/users') return J({ items: await all(`SELECT u.id,u.role,u.name,u.email,u.id_status,u.created_at,g.verified,g.rating,g.reviews FROM users u LEFT JOIN guides g ON g.user_id=u.id WHERE u.role!='admin' ORDER BY u.id DESC LIMIT 500`) });
+      if (route === 'GET /admin/bookings') return J({ items: await all(`SELECT b.*,gu.name guide_name,tu.name tourist_name FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id ORDER BY b.id DESC LIMIT 300`) });
+      if (route === 'POST /admin/bookings/:id/fee_received') { await env.DB.prepare("UPDATE bookings SET payout_status='fee_received' WHERE id=?").bind(id).run(); return J({ ok: 1 }); }
     }
     return err('Not found', 404);
   } catch (e) { return err('Server error: ' + e.message, 500); }

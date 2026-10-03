@@ -19,10 +19,11 @@ async function loadMe() { try { ME = localStorage.tg ? await api('/me') : null }
 function renderMenu() {
   const r = ME?.user.role, cur = location.hash.split('?')[0];
   const items = !ME ? [['#/start', 'Get started'], ['#/guides', 'Browse guides'], ['#/login', 'Sign in'], ['#/signup', 'Sign up']]
+    : r === 'admin' ? [['#/admin', 'Overview'], ['#/admin-verify', 'Verify IDs & media'], ['#/admin-chats', 'All messages'], ['#/admin-tickets', 'Support tickets'], ['#/admin-users', 'Users'], ['#/admin-bookings', 'Bookings & fees']]
     : r === 'guide' ? [['#/dashboard', 'Dashboard'], ['#/bookings', 'Bookings'], ['#/messages', 'Messages'], ['#/availability', 'Availability'], ['#/profile', 'My profile & package'], ['#/invite', 'Invite guides'], ['#/support', 'Customer service']]
     : [['#/dashboard', 'Dashboard'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID'], ['#/support', 'Customer service']];
   $('#menu').innerHTML = items.map(([h, t]) => `<a class="item ${cur === h ? 'on' : ''}" href="${h}">${t}</a>`).join('');
-  $('#who').innerHTML = ME ? `${esc(ME.user.name)} · ${r === 'guide' ? 'Tourguide' : 'Tourist'}<br><a href="#" onclick="logout();return false" style="color:inherit">Sign out</a>` : '';
+  $('#who').innerHTML = ME ? `${esc(ME.user.name)} · ${r === 'guide' ? 'Tourguide' : r === 'admin' ? 'Admin' : 'Tourist'}<br><a href="#" onclick="logout();return false" style="color:inherit">Sign out</a>` : '';
 }
 async function logout() { await api('/logout', { method: 'POST' }).catch(() => {}); localStorage.removeItem('tg'); ME = null; location.hash = '#/login'; }
 const need = role => { if (!ME) { location.hash = '#/login'; return false } if (role && ME.user.role !== role) { V().innerHTML = '<p>Not available for your account type.</p>'; return false } return true; };
@@ -52,7 +53,7 @@ const views = {
     V().innerHTML = `<h1>Sign in</h1><div class="panel" style="max-width:420px"><label>Email</label><input id="e" type="email"><label>Password</label><input id="p" type="password">
     <button class="btn" style="margin-top:16px" id="b">Sign in</button><p style="margin-top:12px">New here? <a href="#/signup">Create an account</a></p>
     <p class="muted" style="font-size:13px;margin-top:10px">Demo guide: mia@demo.tourguyed.com / demo1234</p></div>`;
-    $('#b').onclick = async () => { try { const d = await api('/login', { method: 'POST', body: { email: $('#e').value, password: $('#p').value } }); localStorage.tg = d.token; await loadMe(); location.hash = '#/dashboard'; } catch (e) { toast(e.message) } };
+    $('#b').onclick = async () => { try { const d = await api('/login', { method: 'POST', body: { email: $('#e').value, password: $('#p').value } }); localStorage.tg = d.token; await loadMe(); location.hash = ME.user.role === 'admin' ? '#/admin' : '#/dashboard'; } catch (e) { toast(e.message) } };
   },
   signup() {
     const q = qs();
@@ -101,7 +102,7 @@ const views = {
     $('#book').onclick = () => bookFlow(g);
   },
   async dashboard() {
-    if (!need()) return;
+    if (!need()) return; if (ME.user.role === 'admin') return views.admin();
     const { bookings: b } = await api('/bookings'), isG = ME.user.role === 'guide';
     const up = b.filter(x => ['requested', 'accepted', 'in_progress'].includes(x.status));
     const done = b.filter(x => x.status === 'completed');
@@ -109,7 +110,7 @@ const views = {
     const feeDue = b.filter(x => x.pay_method === 'cash' && x.status === 'completed' && x.payout_status === 'cash_due').reduce((s, x) => s + x.platform_fee, 0);
     V().innerHTML = `<h1>Hello, ${esc(ME.user.name.split(' ')[0])}</h1>
      ${!isG && ME.user.id_status === 'none' ? '<div class="panel">⚠ Upload your ID before booking. <a href="#/profile">Verify now</a></div>' : ''}
-     ${isG && !ME.guide.price ? '<div class="panel">⚠ Finish your profile & set a package price so tourists can find you. <a href="#/profile">Set up profile</a></div>' : ''}${isG && !ME.guide.verified ? '<div class="panel">⏳ Your ID verification is pending. You still appear in search with a "pending" badge. Upload your ID in <a href="#/profile">My profile</a>.</div>' : ''}${isG ? '<div class="panel">📅 Tourists can only book times you open in <a href="#/availability">Availability</a>.</div>' : ''}
+     ${isG && !ME.guide.price ? '<div class="panel">⚠ Finish your profile & set a package price so tourists can find you. <a href="#/profile">Set up profile</a></div>' : ''}${isG && !ME.guide.verified ? '<div class="panel">⏳ Tourists won\'t see you until your ID is verified by TourGuyed. Upload your ID in <a href="#/profile">My profile</a>.</div>' : ''}${isG ? '<div class="panel">📅 Tourists can only book times you open in <a href="#/availability">Availability</a>.</div>' : ''}
      <div class="stats">${isG ? `<div class="stat"><b>${b.filter(x => x.status === 'requested').length}</b>New requests</div><div class="stat"><b>★ ${ME.guide.rating}</b>${ME.guide.reviews} surveys</div>
        <div class="stat"><b>${ME.guide.acceptance}%</b>Acceptance rate</div><div class="stat"><b>${peso(earned)}</b>Earned (after 20%)</div>`
       : `<div class="stat"><b>${up.length}</b>Upcoming tours</div><div class="stat"><b>${done.length}</b>Completed</div><div class="stat"><b>${ME.user.id_status}</b>ID status</div><div class="stat"><b>${new Set(b.map(x => x.guide_id)).size}</b>Guides used</div>`}</div>
@@ -120,12 +121,12 @@ const views = {
   async bookings() { if (!need()) return; const { bookings } = await api('/bookings'); V().innerHTML = '<h1>Bookings</h1>' + bookingTable(bookings); wireBookingActions(); },
   async messages() {
     if (!need()) return;
-    const { bookings } = await api('/bookings'), open = bookings.filter(b => ['requested', 'accepted', 'in_progress', 'completed'].includes(b.status));
+    const { bookings } = await api('/bookings'), open = bookings.filter(b => ['accepted', 'in_progress', 'completed'].includes(b.status));
     const isG = ME.user.role === 'guide'; let cur = +(qs().b) || open[0]?.id;
     V().innerHTML = `<h1>Messages</h1>${open.length ? `<div class="chat"><div class="list">${open.map(b => `<div data-b="${b.id}" class="${b.id === cur ? 'on' : ''}"><b>${esc(isG ? b.tourist_contact : b.guide_name)}</b><br><small class="muted">${b.day} ${b.slot}</small></div>`).join('')}</div>
       <div class="msgs"><div style="padding:10px;border-bottom:2px solid var(--ink);display:flex;gap:8px;flex-wrap:wrap"><a class="btn sm" id="meet" target="_blank">Meet online (video)</a>
       ${!isG ? '<button class="btn ghost sm" id="blk">Block this guide</button>' : ''}</div><div class="log" id="log"></div>
-      <form id="mf"><input id="mi" placeholder="Write a message…" autocomplete="off"><button class="btn">Send</button></form></div></div>` : '<p class="muted">Chat opens once a tourist sends a booking request.</p>'}`;
+      <form id="mf"><input id="mi" placeholder="Write a message…" autocomplete="off"><button class="btn">Send</button></form></div></div>` : '<p class="muted">Chat opens once a tourguide accepts a booking.</p>'}`;
     if (!open.length) return;
     const load = async (send) => {
       const d = await api('/messages/' + cur, send ? { method: 'POST', body: { body: send } } : {});
@@ -197,6 +198,60 @@ const views = {
     V().innerHTML = `<h1>Customer service</h1><div class="panel" style="max-width:560px"><label>Subject</label><input id="s" placeholder="e.g. Guide was late"><label>Details</label><textarea id="d" rows="6"></textarea><button class="btn" style="margin-top:12px" id="b">Send complaint</button></div>`;
     $('#b').onclick = async () => { await api('/support', { method: 'POST', body: { subject: $('#s').value, body: $('#d').value } }); toast('Sent — our team will reply by email'); $('#d').value = ''; };
   },
+  // ---------- admin ----------
+  async admin() {
+    if (!need('admin')) return; const o = await api('/admin/overview');
+    const S = (n, t, h) => `<a class="stat" href="${h}" style="text-decoration:none"><b>${n}</b>${t}</a>`;
+    V().innerHTML = `<h1>Admin overview</h1><div class="stats">${S(o.pending_ids, 'IDs to verify', '#/admin-verify')}${S(o.pending_media, 'Photos/videos to review', '#/admin-verify')}${S(o.open_tickets, 'Open tickets', '#/admin-tickets')}${S(o.bookings, 'Bookings', '#/admin-bookings')}</div>
+      <div class="stats">${S(o.tourists, 'Tourists', '#/admin-users')}${S(o.guides, 'Tourguides', '#/admin-users')}${S(peso(o.fees_earned), 'Platform fees (completed)', '#/admin-bookings')}${S(peso(o.cash_fees_due), 'Cash fees still owed', '#/admin-bookings')}</div>`;
+  },
+  async 'admin-verify'() {
+    if (!need('admin')) return; const { items } = await api('/admin/verifications');
+    const label = { id: 'Government / school ID', school: 'School permission', photo: 'Tour photo', video: 'Tour video' };
+    V().innerHTML = `<h1>Verify IDs & media</h1>${items.length ? `<table><tr><th>User</th><th>Upload</th><th>Status</th><th>Actions</th></tr>${items.map(m => `<tr>
+      <td><b>${esc(m.name)}</b><br><small class="muted">${esc(m.email)} · ${m.role}</small></td><td>${label[m.kind] || m.kind}<br><small class="muted">${m.created_at}</small></td>
+      <td><span class="status ${m.status === 'approved' ? 's-completed' : m.status === 'rejected' ? 's-declined' : 's-requested'}">${m.status}</span></td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ghost" data-view="${m.id}" data-kind="${m.kind}">View</button>${m.status === 'pending' ? `<button class="btn sm" data-dec="approve" data-id="${m.id}">Approve</button><button class="btn sm ghost" data-dec="reject" data-id="${m.id}">Reject</button>` : ''}</td></tr>`).join('')}</table>` : '<p class="muted">Nothing uploaded yet.</p>'}`;
+    document.querySelectorAll('[data-view]').forEach(b => b.onclick = async () => {
+      const r = await fetch('/api/admin/file/' + b.dataset.view, { headers: { authorization: 'Bearer ' + localStorage.tg } });
+      if (!r.ok) return toast('File not stored (uploaded before storage was enabled)');
+      const url = URL.createObjectURL(await r.blob()), type = r.headers.get('content-type') || '';
+      modal(type.startsWith('video') ? `<video src="${url}" controls style="width:100%"></video>` : type.includes('pdf') ? `<iframe src="${url}" style="width:100%;height:70vh;border:0"></iframe>` : `<img src="${url}" style="width:100%;border-radius:12px">`);
+    });
+    document.querySelectorAll('[data-dec]').forEach(b => b.onclick = async () => {
+      const note = b.dataset.dec === 'reject' ? (prompt('Reason (sent to the user):') || '') : '';
+      await api('/admin/media/' + b.dataset.id, { method: 'POST', body: { decision: b.dataset.dec, note } }); toast(b.dataset.dec === 'approve' ? 'Approved' : 'Rejected'); route();
+    });
+  },
+  async 'admin-chats'() {
+    if (!need('admin')) return; const { items } = await api('/admin/conversations'); let cur = +(qs().b) || items.find(x => x.msgs)?.id || items[0]?.id;
+    V().innerHTML = `<h1>All messages</h1>${items.length ? `<div class="chat"><div class="list">${items.map(c => `<div data-b="${c.id}" class="${c.id === cur ? 'on' : ''}"><b>${esc(c.tourist_name)} ↔ ${esc(c.guide_name)}</b><br><small class="muted">${c.day} ${c.slot} · ${c.status} · ${c.msgs} msg</small></div>`).join('')}</div>
+      <div class="msgs"><div style="padding:10px 14px;border-bottom:1px solid var(--line)" id="hd"></div><div class="log" id="log"></div></div></div>` : '<p class="muted">No bookings yet.</p>'}`;
+    if (!items.length) return;
+    const c = items.find(x => x.id === cur); $('#hd').innerHTML = `<small>Tourist: <b>${esc(c.tourist_name)}</b> (${esc(c.tourist_email)}) · Guide: <b>${esc(c.guide_name)}</b> (${esc(c.guide_email)})</small>`;
+    const { messages } = await api('/admin/conversations/' + cur);
+    $('#log').innerHTML = messages.map(m => `<div class="bubble ${m.role === 'guide' ? 'me' : ''}"><small style="opacity:.75">${esc(m.name)} · ${m.role} · ${m.created_at}</small><br>${esc(m.body)}</div>`).join('') || '<p class="muted">No messages in this booking yet.</p>';
+    document.querySelectorAll('.list div').forEach(el => el.onclick = () => { location.hash = '#/admin-chats?b=' + el.dataset.b; });
+  },
+  async 'admin-tickets'() {
+    if (!need('admin')) return; const { items } = await api('/admin/tickets');
+    V().innerHTML = `<h1>Support tickets</h1>${items.map(t => `<div class="panel"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><b>${esc(t.subject)}</b><span class="status ${t.status === 'open' ? 's-requested' : 's-completed'}">${t.status}</span></div>
+      <small class="muted">${esc(t.name)} · ${esc(t.email)} · ${t.role} · ${t.created_at}</small><p style="margin:10px 0;white-space:pre-wrap">${esc(t.body)}</p>
+      ${t.status === 'open' ? `<textarea id="r${t.id}" rows="2" placeholder="Reply (emailed to the user if email is set up)"></textarea><button class="btn sm" style="margin-top:8px" data-t="${t.id}">Resolve</button>` : ''}</div>`).join('') || '<p class="muted">No tickets.</p>'}`;
+    document.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => { await api('/admin/tickets/' + b.dataset.t, { method: 'POST', body: { reply: $('#r' + b.dataset.t).value } }); toast('Resolved'); route(); });
+  },
+  async 'admin-users'() {
+    if (!need('admin')) return; const { items } = await api('/admin/users');
+    V().innerHTML = `<h1>Users</h1><table><tr><th>Name</th><th>Email</th><th>Role</th><th>ID</th><th>Rating</th><th>Joined</th></tr>${items.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td>
+      <td><span class="status ${u.id_status === 'verified' ? 's-completed' : u.id_status === 'pending' ? 's-requested' : 's-declined'}">${u.id_status}</span></td><td>${u.role === 'guide' ? `★ ${u.rating} (${u.reviews})` : '—'}</td><td>${(u.created_at || '').slice(0, 10)}</td></tr>`).join('')}</table>`;
+  },
+  async 'admin-bookings'() {
+    if (!need('admin')) return; const { items } = await api('/admin/bookings');
+    V().innerHTML = `<h1>Bookings & fees</h1><table><tr><th>When</th><th>Tourist → Guide</th><th>Amount</th><th>20% fee</th><th>Pay</th><th>Status</th><th></th></tr>${items.map(b => `<tr><td>${b.day} ${b.slot}</td><td>${esc(b.tourist_name)} → ${esc(b.guide_name)}</td>
+      <td>${peso(b.amount)}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${peso(b.platform_fee)}</td><td>${b.pay_method}<br><small class="muted">${b.payout_status}</small></td><td><span class="status s-${b.status}">${b.status}</span></td>
+      <td>${b.pay_method === 'cash' && b.status === 'completed' && ['cash_due', 'fee_reported'].includes(b.payout_status) ? `<button class="btn sm" data-fee="${b.id}">Fee received</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7">No bookings yet.</td></tr>'}</table>`;
+    document.querySelectorAll('[data-fee]').forEach(b => b.onclick = async () => { await api(`/admin/bookings/${b.dataset.fee}/fee_received`, { method: 'POST' }); toast('Marked as received'); route(); });
+  },
 };
 
 async function upload(kind, f) { if (f.size > 20e6) throw new Error('Max 20MB per file'); return api('/upload', { method: 'POST', body: { kind, name: f.name, dataUrl: await fileToDataUrl(f) } }); }
@@ -215,7 +270,7 @@ function bookingTable(list) {
       if (b.status === 'completed' && !b.reviewed) a.push(B('rate', 'Rate guide'));
       if (b.status === 'completed') a.push(`<a class="btn sm ghost" href="#/guide/${b.guide_id}">Book again</a>`);
     }
-    if (['requested', 'accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`);
+    if (['accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`);
     return `<tr><td>${b.day} ${b.slot}${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
       <td>${peso(b.amount)}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${b.payout_status}</small></td>
       <td><span class="status s-${b.status}">${b.status.replace('_', ' ')}</span>${b.decline_reason ? `<br><small>${esc(b.decline_reason)}</small>` : ''}</td><td style="display:flex;gap:6px;flex-wrap:wrap">${a.join('')}</td></tr>`;
@@ -263,4 +318,4 @@ async function route() {
   try { await (views[name] || views.start)(arg); } catch (e) { V().innerHTML = `<h1>Oops</h1><p>${esc(e.message)}</p>`; }
 }
 window.addEventListener('hashchange', route);
-loadMe().then(() => { if (!location.hash) location.hash = ME ? '#/dashboard' : '#/start'; else route(); });
+loadMe().then(() => { if (!location.hash) location.hash = ME ? (ME.user.role === 'admin' ? '#/admin' : '#/dashboard') : '#/start'; else route(); });
