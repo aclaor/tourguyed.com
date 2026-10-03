@@ -155,7 +155,7 @@ const views = {
   async profile() {
     if (!need()) return;
     const idBox = `<div class="panel"><h3>Identity verification</h3><p class="muted">Status: <b>${{ none: 'not uploaded yet', pending: 'uploaded — waiting for review', verified: '✓ verified', rejected: 'rejected — please upload a clearer photo' }[ME.user.id_status] || ME.user.id_status}</b>. Your ID is stored privately and never shown to ${ME.user.role === 'guide' ? 'tourists' : 'guides'} — they only see a verified badge.</p>
-      <label>Government or school ID <span class="req">*</span></label><input type="file" id="idf" accept="image/*${ME.user.storage === 'r2' ? ',application/pdf' : ''}"><button class="btn sm" style="margin-top:8px" id="idb">Upload ID</button></div>`;
+      <label>${ME.user.id_status === 'none' || ME.user.id_status === 'rejected' ? 'Choose a photo of your government or school ID — it uploads automatically' : 'Replace your ID (optional)'} <span class="req">*</span></label><input type="file" id="idf" accept="image/*${ME.user.storage === 'r2' ? ',application/pdf' : ''}"><p id="idmsg" class="muted" style="margin-top:6px"></p></div>`;
     if (ME.user.role === 'tourist') { V().innerHTML = '<h1>Verify ID</h1>' + idBox + `<p class="muted">Guides contact you via your private relay address: ${esc(ME.user.relay)}</p>
       <div class="panel"><h3>Want to be a tourguide?</h3><p class="muted">Switch this account to a tourguide account. Keep the same email and password, then set up your places, package and verification.</p><button class="btn" style="margin-top:12px" id="bg">Become a tourguide</button></div>`;
       $('#bg').onclick = async () => { if (!confirm('Switch this account to a tourguide account? You will no longer book tours with this account.')) return; try { await api('/become-guide', { method: 'POST' }); await loadMe(); toast('You are now a tourguide — set up your profile'); location.hash = '#/profile'; route(); } catch (e) { toast(e.message) } };
@@ -183,7 +183,7 @@ const views = {
       <label style="font-weight:400"><input type="checkbox" id="offers_local" ${g.offers_local ? 'checked' : ''}> I can arrange other local guides</label>
       <label>Wise account email (for payouts) ${R}</label><input id="wise_email" type="email" required value="${esc(g.wise_email)}"></div></div>
       <button class="btn" style="margin-top:16px" id="save">Save profile</button></div>
-      <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically. ${ME.user.storage === 'r2' ? 'Videos up to 50MB, max 30 uploads.' : 'Videos must be under 1MB for now.'}</p><input type="file" id="mf" accept="video/*,image/*,.heic,.mov" multiple><button class="btn sm" style="margin-top:8px" id="mb">Upload</button>
+      <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically. ${ME.user.storage === 'r2' ? 'Videos up to 50MB, max 30 uploads.' : 'Videos must be under 1MB for now.'}</p><input type="file" id="mf" accept="video/*,image/*,.heic,.mov" multiple><button class="btn sm" style="margin-top:8px;display:none" id="mb">Upload</button><p id="mmsg" class="muted" style="margin-top:6px">Pick one or more files — they upload automatically.</p>
       <h3 style="margin-top:22px;font-size:18px">My uploads</h3><div id="gal" class="grid4" style="margin-top:12px"><p class="muted">Loading…</p></div></div>`;
     wireId();
     const stu = () => { const on = $('#is_student').value === '1'; $('#stu').style.display = on ? '' : 'none'; $('#school').required = on; }; $('#is_student').onchange = stu; stu();
@@ -212,9 +212,10 @@ const views = {
       document.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => { if (!confirm('Delete this upload?')) return; await api(`/my-media/${b.dataset.rm}/delete`, { method: 'POST' }); toast('Deleted'); gallery(); });
     };
     gallery();
+    $('#mf').onchange = () => $('#mb').onclick();
     $('#mb').onclick = async () => { const fs = [...$('#mf').files]; if (!fs.length) return toast('Choose photos or videos first'); $('#mb').disabled = true;
-      try { for (const [i, f] of fs.entries()) { $('#mb').textContent = `Uploading ${i + 1}/${fs.length}…`; await upload(f.type.startsWith('video') ? 'video' : 'photo', f); } toast('Uploaded — TourGuyed will review them shortly'); $('#mf').value = ''; } catch (e) { toast(e.message) }
-      $('#mb').disabled = false; $('#mb').textContent = 'Upload'; gallery(); };
+      try { for (const [i, f] of fs.entries()) { $('#mmsg').textContent = `⏳ Uploading ${i + 1} of ${fs.length}: ${f.name}…`; await upload(f.type.startsWith('video') ? 'video' : 'photo', f); } toast('✓ Uploaded — TourGuyed will review them shortly'); $('#mmsg').textContent = '✓ Uploaded. Pick more files to add them.'; $('#mf').value = ''; } catch (e) { toast(e.message); $('#mmsg').textContent = '✗ ' + e.message; }
+      $('#mb').disabled = false; gallery(); };
   },
   async availability() {
     if (!need('guide')) return;
@@ -330,7 +331,7 @@ async function upload(kind, f) {
   else { if (f.size > 1.3e6) throw new Error(isVid ? 'Videos must be under 1MB for now — trim it or upload photos instead' : 'File must be under 1MB — take a photo of it instead'); dataUrl = await fileToDataUrl(f); }
   return api('/upload', { method: 'POST', body: { kind, name: f.name.replace(/\.\w+$/, '') + (isImg ? '.jpg' : ''), dataUrl } });
 }
-function wireId() { $('#idb').onclick = async () => { const f = $('#idf').files[0]; if (!f) return toast('Choose a photo of your ID first'); $('#idb').disabled = true; $('#idb').textContent = 'Uploading…'; try { await upload('id', f); await loadMe(); toast('ID uploaded — we will review it shortly'); route(); } catch (e) { toast(e.message); $('#idb').disabled = false; $('#idb').textContent = 'Upload ID'; } }; }
+function wireId() { $('#idf').onchange = async () => { const f = $('#idf').files[0]; if (!f) return; $('#idmsg').textContent = '⏳ Uploading ' + f.name + '…'; try { await upload('id', f); await loadMe(); toast('✓ ID uploaded — waiting for review'); route(); } catch (e) { $('#idmsg').textContent = '✗ ' + e.message; toast(e.message); } }; }
 
 const payLabel = s => ({ unpaid: 'not paid yet', held: 'paid · held safely', partial_released: '50% released to guide', released: 'fully released', refunded: 'refunded', partial_refund: 'half refunded', cash_due: 'cash · fee due', fee_reported: 'cash · fee reported', fee_received: 'cash · fee received', none: '—' }[s] || s);
 function bookingTable(list) {
