@@ -37,6 +37,36 @@ function shapeGuide(g) {
   const total = g.accepted + g.declined; g.acceptance = total ? Math.round(g.accepted / total * 100) : 100;
   g.id = g.user_id; delete g.wise_email; return g;
 }
+
+// ---------- PayMongo ----------
+async function pm(env, method, path, attributes) {
+  const r = await fetch('https://api.paymongo.com/v1' + path, { method, headers: { 'content-type': 'application/json', authorization: 'Basic ' + btoa(env.PAYMONGO_SECRET_KEY + ':') },
+    body: attributes ? JSON.stringify({ data: { attributes } }) : undefined });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Payment service error: ' + (d.errors?.[0]?.detail || r.status) + '. Please try again.');
+  return d.data;
+}
+async function hmacHex(secret, msg) {
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return [...new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(msg)))].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+// mark a booking paid after confirming with PayMongo (used by webhook and by return-from-checkout)
+async function syncPayment(env, b) {
+  if (!b.pm_checkout || b.pm_payment) return b;
+  const cs = await pm(env, 'GET', '/checkout_sessions/' + b.pm_checkout);
+  const pay = (cs.attributes.payments || []).find(x => x.attributes.status === 'paid');
+  if (pay) {
+    await env.DB.prepare("UPDATE bookings SET pm_payment=?, payout_status='held' WHERE id=?").bind(pay.id, b.id).run();
+    await notify(env, b.guide_id, 'Tourist paid for the tour', `Booking #${b.id} on ${b.day} ${b.slot} is paid and held by TourGuyed.`);
+    return { ...b, pm_payment: pay.id, payout_status: 'held' };
+  }
+  return b;
+}
+async function refundIfPaid(env, b, amount) {
+  if (b.pay_method !== 'online' || !b.pm_payment || amount <= 0) return;
+  await pm(env, 'POST', '/refunds', { amount: Math.round(amount * 100), payment_id: b.pm_payment, reason: 'requested_by_customer', notes: `TourGuyed booking #${b.id}` });
+}
+
 async function resetLink(env, uid, origin) {
   const t = crypto.randomUUID() + crypto.randomUUID();
   await env.DB.prepare('INSERT INTO resets(token,user_id,expires) VALUES(?,?,?)').bind(t, uid, Date.now() + 3600e3).run();
@@ -55,6 +85,18 @@ const minsUntil = b => (new Date(`${b.day}T${b.slot}:00+08:00`) - Date.now()) / 
 export async function onRequest({ request: req, env, params }) {
   if (!env.DB) return err('Database not bound. See README.', 500);
   const p = params.path || [], M = req.method, url = new URL(req.url);
+  if (p.join('/') === 'paymongo/webhook' && M === 'POST') {
+    const raw = await req.text(), sig = Object.fromEntries((req.headers.get('paymongo-signature') || '').split(',').map(x => x.split('=')));
+    const mine = await hmacHex(env.PAYMONGO_WEBHOOK_SECRET || '', `${sig.t}.${raw}`);
+    if (!env.PAYMONGO_WEBHOOK_SECRET || (mine !== sig.li && mine !== sig.te)) return err('Bad signature', 401);
+    const ev = JSON.parse(raw).data?.attributes;
+    if (ev?.type === 'checkout_session.payment.paid') {
+      const bid = +ev.data?.attributes?.metadata?.booking_id;
+      const b = bid && await env.DB.prepare('SELECT * FROM bookings WHERE id=?').bind(bid).first();
+      if (b) await syncPayment(env, b);
+    }
+    return J({ ok: 1 });
+  }
   const body = M === 'POST' || M === 'PUT' ? await req.json().catch(() => ({})) : {};
   const route = `${M} /${p.map((x, i) => (/^\d+$/.test(x) ? ':id' : x)).join('/')}`;
   const id = +p.find(x => /^\d+$/.test(x));
@@ -175,8 +217,9 @@ export async function onRequest({ request: req, env, params }) {
       const slot = await env.DB.prepare('SELECT 1 FROM availability WHERE guide_id=? AND day=? AND slot=?').bind(g.user_id, body.day, body.slot).first();
       if (!slot) return err('That time is not available');
       const pm = body.pay_method === 'online' ? 'online' : 'cash';
+      if (pm === 'online' && !env.PAYMONGO_SECRET_KEY) return err('Online payment is not available yet. Please choose cash.');
       const r = await env.DB.prepare('INSERT INTO bookings(tourist_id,guide_id,day,slot,timeline,pay_method,amount,platform_fee,payout_status) VALUES(?,?,?,?,?,?,?,?,?)')
-        .bind(u.id, g.user_id, body.day, body.slot, body.timeline || '', pm, g.price, +(g.price * FEE).toFixed(2), pm === 'cash' ? 'cash_due' : 'held').run();
+        .bind(u.id, g.user_id, body.day, body.slot, body.timeline || '', pm, g.price, +(g.price * FEE).toFixed(2), pm === 'cash' ? 'cash_due' : 'unpaid').run();
       await notify(env, g.user_id, 'New TourGuyed booking request', `You have a new request for ${body.day} ${body.slot}. Open your dashboard to accept or decline.`);
       return J({ id: r.meta.last_row_id });
     }
@@ -193,27 +236,45 @@ export async function onRequest({ request: req, env, params }) {
       const b = await env.DB.prepare('SELECT * FROM bookings WHERE id=?').bind(id).first();
       if (!b || (b.guide_id !== u.id && b.tourist_id !== u.id)) return err('Not found', 404);
       const isG = b.guide_id === u.id, set = (s, extra = '', ...v) => env.DB.prepare(`UPDATE bookings SET status=?${extra} WHERE id=?`).bind(s, ...v, id).run();
+      if (action === 'pay' && !isG) {
+        if (b.pay_method !== 'online' || b.status !== 'accepted' || b.pm_payment) return err('Nothing to pay right now');
+        const g = await env.DB.prepare('SELECT package_title FROM guides WHERE user_id=?').bind(b.guide_id).first();
+        const cs = await pm(env, 'POST', '/checkout_sessions', {
+          line_items: [{ name: `TourGuyed: ${g?.package_title || 'Tour'} (${b.day} ${b.slot})`, amount: Math.round(b.amount * 100), currency: 'PHP', quantity: 1 }],
+          payment_method_types: ['gcash', 'paymaya', 'card', 'grab_pay'], send_email_receipt: true, show_description: true, show_line_items: true,
+          description: `Booking #${b.id}`, reference_number: `TG-${b.id}-${Date.now()}`, metadata: { booking_id: String(b.id) },
+          success_url: `${url.origin}/app.html#/bookings?paid=${b.id}`, cancel_url: `${url.origin}/app.html#/bookings` });
+        await env.DB.prepare('UPDATE bookings SET pm_checkout=? WHERE id=?').bind(cs.id, id).run();
+        return J({ checkout_url: cs.attributes.checkout_url });
+      }
+      if (action === 'check_payment') { await syncPayment(env, b); return J({ ok: 1 }); }
       if (action === 'accept' && isG && b.status === 'requested') {
         await set('accepted'); await env.DB.prepare('UPDATE guides SET accepted=accepted+1 WHERE user_id=?').bind(u.id).run();
-        await notify(env, b.tourist_id, 'Your tourguide accepted!', `Your tour on ${b.day} ${b.slot} is confirmed. You can now chat in TourGuyed.`);
+        await notify(env, b.tourist_id, 'Your tourguide accepted!', `Your tour on ${b.day} ${b.slot} is confirmed. You can now chat in TourGuyed.${b.pay_method === 'online' ? ' Please pay online from your bookings page before the tour.' : ''}`);
       } else if (action === 'decline' && isG && b.status === 'requested') {
         if (!(body.reason || '').trim()) return err('A reason is required to decline');
-        await set('declined', ',decline_reason=?,refund=amount', body.reason); await env.DB.prepare('UPDATE guides SET declined=declined+1 WHERE user_id=?').bind(u.id).run();
+        await set('declined', ',decline_reason=?', body.reason); await env.DB.prepare('UPDATE guides SET declined=declined+1 WHERE user_id=?').bind(u.id).run();
         await notify(env, b.tourist_id, 'Booking declined', `Reason: ${body.reason}`);
       } else if (action === 'cancel' && !isG && ['requested', 'accepted'].includes(b.status)) {
         if (b.payout_status === 'partial_released' || b.payout_status === 'released') return err('Payment already released — no refund possible');
         const late = minsUntil(b) < CANCEL_WINDOW_MIN;
         if (late && !body.confirm_late) return J({ needs_confirm: true, message: 'Less than 30 minutes before the tour: you will only get half of the package back.' });
-        await set('cancelled', ',refund=?', late ? b.amount / 2 : b.amount);
+        const refund = b.pm_payment ? (late ? b.amount / 2 : b.amount) : 0;
+        await refundIfPaid(env, b, refund);
+        await set('cancelled', ",refund=?,payout_status=?", refund, b.pay_method === 'cash' ? 'none' : b.pm_payment ? (late ? 'partial_refund' : 'refunded') : 'unpaid');
       } else if (action === 'noshow' && !isG && b.status === 'accepted') {
         if (minsUntil(b) > -CANCEL_WINDOW_MIN) return err('You can report a no-show once the guide is 30 minutes late');
-        await set('no_show', ",refund=amount,payout_status='refunded'");
+        await refundIfPaid(env, b, b.amount);
+        await set('no_show', ",refund=?,payout_status=?", b.pm_payment ? b.amount : 0, b.pm_payment ? 'refunded' : 'none');
+      } else if (['start', 'release'].includes(action) && b.pay_method === 'online' && !b.pm_payment) {
+        return err('Please pay for the tour first');
       } else if (action === 'start' && !isG && b.status === 'accepted' && b.pay_method === 'online') {
         // tourist confirms meeting → first half paid out to guide
         await env.DB.prepare("UPDATE bookings SET status='in_progress', payout_status='partial_released' WHERE id=?").bind(id).run();
       } else if (action === 'release' && !isG && ['accepted', 'in_progress'].includes(b.status)) {
         // tourist confirms tour complete → full payout; refund no longer possible
         await env.DB.prepare(`UPDATE bookings SET status='completed', payout_status=? WHERE id=?`).bind(b.pay_method === 'cash' ? 'cash_due' : 'released', id).run();
+        if (b.pay_method === 'cash') await notify(env, b.guide_id, 'Tour completed — platform fee due', `Please pay the 20% platform fee (₱${b.platform_fee}) for booking #${b.id}.`);
       } else if (action === 'fee_paid' && isG && b.pay_method === 'cash') {
         await env.DB.prepare("UPDATE bookings SET payout_status='fee_reported' WHERE id=?").bind(id).run();
       } else return err('Action not allowed in this state');
@@ -262,7 +323,9 @@ export async function onRequest({ request: req, env, params }) {
           tourists: await one("SELECT COUNT(*) n FROM users WHERE role='tourist'"), pending_ids: await one("SELECT COUNT(*) n FROM media WHERE kind IN('id','school') AND status='pending'"),
           pending_media: await one("SELECT COUNT(*) n FROM media WHERE kind IN('photo','video') AND status='pending'"), open_tickets: await one("SELECT COUNT(*) n FROM tickets WHERE status='open'"),
           bookings: await one("SELECT COUNT(*) n FROM bookings"), fees_earned: await one("SELECT COALESCE(SUM(platform_fee),0) n FROM bookings WHERE status='completed'"),
-          cash_fees_due: await one("SELECT COALESCE(SUM(platform_fee),0) n FROM bookings WHERE status='completed' AND payout_status='cash_due'")
+          cash_fees_due: await one("SELECT COALESCE(SUM(platform_fee),0) n FROM bookings WHERE status='completed' AND payout_status='cash_due'"),
+          payouts_due: await one("SELECT COALESCE(SUM(CASE WHEN payout_status='released' THEN amount-platform_fee ELSE amount/2 END - guide_paid),0) n FROM bookings WHERE pay_method='online' AND payout_status IN('partial_released','released')"),
+          online_enabled: env.PAYMONGO_SECRET_KEY ? 1 : 0
         });
       }
       if (route === 'GET /admin/verifications') return J({ items: (await all(`SELECT m.id,m.kind,m.status,m.created_at,m.user_id,(m.data IS NOT NULL) stored,u.name,u.email,u.role,u.id_status FROM media m JOIN users u ON u.id=m.user_id ORDER BY m.status='pending' DESC, m.id DESC LIMIT 200`)).map(x => ({ ...x, stored: x.stored || !!env.FILES })) });
@@ -298,6 +361,16 @@ export async function onRequest({ request: req, env, params }) {
       if (route === 'GET /admin/bookings') return J({ items: await all(`SELECT b.*,gu.name guide_name,tu.name tourist_name FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id ORDER BY b.id DESC LIMIT 300`) });
       if (route === 'POST /admin/media/:id/delete') { await env.DB.prepare('DELETE FROM media WHERE id=?').bind(id).run(); return J({ ok: 1 }); }
       if (route === 'POST /admin/users/:id/reset') return J({ link: await resetLink(env, id, url.origin) });
+      if (route === 'GET /admin/payouts') return J({ items: (await all(`SELECT b.id,b.day,b.slot,b.amount,b.platform_fee,b.payout_status,b.guide_paid,b.status,u.name guide_name,g.wise_email
+          FROM bookings b JOIN users u ON u.id=b.guide_id JOIN guides g ON g.user_id=b.guide_id WHERE b.pay_method='online' AND b.payout_status IN('partial_released','released') ORDER BY b.id DESC`))
+          .map(b => ({ ...b, owed: +((b.payout_status === 'released' ? b.amount - b.platform_fee : b.amount / 2) - b.guide_paid).toFixed(2) })).filter(b => b.owed > 0) });
+      if (route === 'POST /admin/payouts/:id') {
+        const b = await env.DB.prepare('SELECT * FROM bookings WHERE id=?').bind(id).first(); if (!b) return err('Not found', 404);
+        const owed = (b.payout_status === 'released' ? b.amount - b.platform_fee : b.amount / 2) - b.guide_paid;
+        await env.DB.prepare('UPDATE bookings SET guide_paid=guide_paid+? WHERE id=?').bind(owed, id).run();
+        await notify(env, b.guide_id, 'TourGuyed payout sent', `₱${owed.toFixed(2)} for booking #${b.id} was sent to your Wise account.`);
+        return J({ ok: 1 });
+      }
       if (route === 'POST /admin/bookings/:id/fee_received') { await env.DB.prepare("UPDATE bookings SET payout_status='fee_received' WHERE id=?").bind(id).run(); return J({ ok: 1 }); }
     }
     return err('Not found', 404);

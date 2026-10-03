@@ -19,7 +19,7 @@ async function loadMe() { try { ME = localStorage.tg ? await api('/me') : null }
 function renderMenu() {
   const r = ME?.user.role, cur = location.hash.split('?')[0];
   const items = !ME ? [['#/start', 'Get started'], ['#/guides', 'Browse guides'], ['#/login', 'Sign in'], ['#/signup', 'Sign up']]
-    : r === 'admin' ? [['#/admin', 'Overview'], ['#/admin-verify', 'Verify IDs & media'], ['#/admin-chats', 'All messages'], ['#/admin-tickets', 'Support tickets'], ['#/admin-users', 'Users'], ['#/admin-bookings', 'Bookings & fees']]
+    : r === 'admin' ? [['#/admin', 'Overview'], ['#/admin-verify', 'Verify IDs & media'], ['#/admin-chats', 'All messages'], ['#/admin-tickets', 'Support tickets'], ['#/admin-users', 'Users'], ['#/admin-bookings', 'Bookings & fees'], ['#/admin-payouts', 'Guide payouts']]
     : r === 'guide' ? [['#/dashboard', 'Dashboard'], ['#/bookings', 'Bookings'], ['#/messages', 'Messages'], ['#/availability', 'Availability'], ['#/profile', 'My profile & package'], ['#/invite', 'Invite guides'], ['#/support', 'Customer service']]
     : [['#/dashboard', 'Dashboard'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID'], ['#/support', 'Customer service']];
   $('#menu').innerHTML = items.map(([h, t]) => `<a class="item ${cur === h ? 'on' : ''}" href="${h}">${t}</a>`).join('');
@@ -126,7 +126,10 @@ const views = {
      <h2 style="font-size:28px;margin:10px 0">Upcoming</h2>${bookingTable(up)}`;
     wireBookingActions();
   },
-  async bookings() { if (!need()) return; const { bookings } = await api('/bookings'); V().innerHTML = '<h1>Bookings</h1>' + bookingTable(bookings); wireBookingActions(); },
+  async bookings() {
+    if (!need()) return; const paid = qs().paid;
+    if (paid) { await api(`/bookings/${paid}/pay`.replace('/pay', '/check_payment'), { method: 'POST' }).catch(() => {}); toast('Thank you! Your payment is being confirmed.'); history.replaceState(null, '', '#/bookings'); }
+    const { bookings } = await api('/bookings'); V().innerHTML = '<h1>Bookings</h1>' + bookingTable(bookings); wireBookingActions(); },
   async messages() {
     if (!need()) return;
     const { bookings } = await api('/bookings'), open = bookings.filter(b => ['accepted', 'in_progress', 'completed'].includes(b.status));
@@ -211,7 +214,9 @@ const views = {
     if (!need('admin')) return; const o = await api('/admin/overview');
     const S = (n, t, h) => `<a class="stat" href="${h}" style="text-decoration:none"><b>${n}</b>${t}</a>`;
     V().innerHTML = `<h1>Admin overview</h1><div class="stats">${S(o.pending_ids, 'IDs to verify', '#/admin-verify')}${S(o.pending_media, 'Photos/videos to review', '#/admin-verify')}${S(o.open_tickets, 'Open tickets', '#/admin-tickets')}${S(o.bookings, 'Bookings', '#/admin-bookings')}</div>
-      <div class="stats">${S(o.tourists, 'Tourists', '#/admin-users')}${S(o.guides, 'Tourguides', '#/admin-users')}${S(peso(o.fees_earned), 'Platform fees (completed)', '#/admin-bookings')}${S(peso(o.cash_fees_due), 'Cash fees still owed', '#/admin-bookings')}</div>`;
+      <div class="stats">${S(o.tourists, 'Tourists', '#/admin-users')}${S(o.guides, 'Tourguides', '#/admin-users')}${S(peso(o.fees_earned), 'Platform fees (completed)', '#/admin-bookings')}${S(peso(o.cash_fees_due), 'Cash fees still owed', '#/admin-bookings')}</div>
+      <div class="stats">${S(peso(o.payouts_due), 'To pay guides (Wise)', '#/admin-payouts')}</div>
+      ${o.online_enabled ? '' : '<div class="panel">⚠ Online payments are off. Add PAYMONGO_SECRET_KEY to the Worker settings to turn them on.</div>'}`;
   },
   async 'admin-verify'() {
     if (!need('admin')) return; const { items } = await api('/admin/verifications');
@@ -255,10 +260,17 @@ const views = {
       <td><span class="status ${u.id_status === 'verified' ? 's-completed' : u.id_status === 'pending' ? 's-requested' : 's-declined'}">${u.id_status}</span></td><td>${u.role === 'guide' ? `★ ${u.rating} (${u.reviews})` : '—'}</td><td>${(u.created_at || '').slice(0, 10)}</td><td><button class="btn sm ghost" data-rs="${u.id}">Reset link</button></td></tr>`).join('')}</table>`;
     document.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => { const d = await api('/admin/users/' + b.dataset.rs + '/reset', { method: 'POST' }); modal(`<h3>Password reset link</h3><p class="muted">Send this to the user. It works once and expires in 1 hour.</p><input value="${esc(d.link)}" onclick="this.select()" readonly>`); });
   },
+  async 'admin-payouts'() {
+    if (!need('admin')) return; const { items } = await api('/admin/payouts');
+    V().innerHTML = `<h1>Guide payouts</h1><p class="muted" style="margin-bottom:14px">Online payments land in your PayMongo account. Send each guide their share by Wise, then click "Mark sent".</p>
+      ${items.length ? `<table><tr><th>Booking</th><th>Guide</th><th>Wise email</th><th>Stage</th><th>Send now</th><th></th></tr>${items.map(b => `<tr><td>#${b.id}<br><small class="muted">${b.day} ${b.slot}</small></td><td>${esc(b.guide_name)}</td><td>${esc(b.wise_email || '—')}</td>
+      <td>${b.payout_status === 'released' ? 'Tour complete (balance minus 20%)' : 'Met tourist (first 50%)'}</td><td><b>${peso(b.owed)}</b></td><td><button class="btn sm" data-po="${b.id}">Mark sent</button></td></tr>`).join('')}</table>` : '<p class="muted">Nothing to pay out right now.</p>'}`;
+    document.querySelectorAll('[data-po]').forEach(b => b.onclick = async () => { if (!confirm('Confirm you sent this amount by Wise?')) return; await api('/admin/payouts/' + b.dataset.po, { method: 'POST' }); toast('Marked as sent'); route(); });
+  },
   async 'admin-bookings'() {
     if (!need('admin')) return; const { items } = await api('/admin/bookings');
     V().innerHTML = `<h1>Bookings & fees</h1><table><tr><th>When</th><th>Tourist → Guide</th><th>Amount</th><th>20% fee</th><th>Pay</th><th>Status</th><th></th></tr>${items.map(b => `<tr><td>${b.day} ${b.slot}</td><td>${esc(b.tourist_name)} → ${esc(b.guide_name)}</td>
-      <td>${peso(b.amount)}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${peso(b.platform_fee)}</td><td>${b.pay_method}<br><small class="muted">${b.payout_status}</small></td><td><span class="status s-${b.status}">${b.status}</span></td>
+      <td>${peso(b.amount)}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${peso(b.platform_fee)}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td><td><span class="status s-${b.status}">${b.status}</span></td>
       <td>${b.pay_method === 'cash' && b.status === 'completed' && ['cash_due', 'fee_reported'].includes(b.payout_status) ? `<button class="btn sm" data-fee="${b.id}">Fee received</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7">No bookings yet.</td></tr>'}</table>`;
     document.querySelectorAll('[data-fee]').forEach(b => b.onclick = async () => { await api(`/admin/bookings/${b.dataset.fee}/fee_received`, { method: 'POST' }); toast('Marked as received'); route(); });
   },
@@ -267,6 +279,7 @@ const views = {
 async function upload(kind, f) { if (f.size > 20e6) throw new Error('Max 20MB per file'); return api('/upload', { method: 'POST', body: { kind, name: f.name, dataUrl: await fileToDataUrl(f) } }); }
 function wireId() { $('#idb').onclick = async () => { const f = $('#idf').files[0]; if (!f) return toast('Choose a file'); try { await upload('id', f); await loadMe(); toast('ID uploaded — under review'); route(); } catch (e) { toast(e.message) } }; }
 
+const payLabel = s => ({ unpaid: 'not paid yet', held: 'paid · held safely', partial_released: '50% released to guide', released: 'fully released', refunded: 'refunded', partial_refund: 'half refunded', cash_due: 'cash · fee due', fee_reported: 'cash · fee reported', fee_received: 'cash · fee received', none: '—' }[s] || s);
 function bookingTable(list) {
   const isG = ME.user.role === 'guide';
   if (!list.length) return '<p class="muted">No bookings yet.</p>';
@@ -274,6 +287,8 @@ function bookingTable(list) {
     const a = []; const B = (act, t, ghost) => `<button class="btn sm ${ghost ? 'ghost' : ''}" data-act="${act}" data-id="${b.id}">${t}</button>`;
     if (isG) { if (b.status === 'requested') a.push(B('accept', 'Accept'), B('decline', 'Decline', 1)); if (b.pay_method === 'cash' && b.status === 'completed' && b.payout_status === 'cash_due') a.push(B('fee_paid', `I paid ${peso(b.platform_fee)} fee`, 1)); }
     else {
+      if (b.pay_method === 'online' && b.status === 'accepted' && !b.pm_payment) a.push(B('pay', `Pay ${peso(b.amount)} now`));
+      if (b.pay_method === 'online' && b.status === 'requested') a.push('<small class="muted">Pay online after the guide accepts</small>');
       if (['requested', 'accepted'].includes(b.status)) a.push(B('cancel', 'Cancel', 1));
       if (b.status === 'accepted' && b.pay_method === 'online') a.push(B('start', 'Met guide → release 50%'));
       if (['accepted', 'in_progress'].includes(b.status)) a.push(B('release', 'Tour done → release payment'), B('noshow', 'Guide no-show', 1));
@@ -282,7 +297,7 @@ function bookingTable(list) {
     }
     if (['accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`);
     return `<tr><td>${b.day} ${b.slot}${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
-      <td>${peso(b.amount)}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${b.payout_status}</small></td>
+      <td>${peso(b.amount)}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td>
       <td><span class="status s-${b.status}">${b.status.replace('_', ' ')}</span>${b.decline_reason ? `<br><small>${esc(b.decline_reason)}</small>` : ''}</td><td style="display:flex;gap:6px;flex-wrap:wrap">${a.join('')}</td></tr>`;
   }).join('')}</table>`;
 }
@@ -291,6 +306,7 @@ function wireBookingActions() {
     const act = btn.dataset.act, id = btn.dataset.id, body = {};
     if (act === 'rate') return modal(`<h3>Rate your tourguide</h3><label>Stars</label><select id="st">${[5, 4, 3, 2, 1].map(n => `<option>${n}</option>`)}</select><label>Survey comment</label><textarea id="cm" rows="4"></textarea><button class="btn" style="margin-top:12px" onclick="submitRate(${id})">Submit</button>`);
     if (act === 'decline') { body.reason = prompt('Reason for declining (required, shown to tourist):'); if (!body.reason) return; }
+    if (act === 'pay') { try { const d = await api(`/bookings/${id}/pay`, { method: 'POST' }); location.href = d.checkout_url; } catch (e) { toast(e.message) } return; }
     if (act === 'release' && !confirm('Release payment? After this you can no longer get a refund.')) return;
     try {
       let d = await api(`/bookings/${id}/${act}`, { method: 'POST', body });
@@ -309,7 +325,7 @@ async function bookFlow(g) {
   const draw = () => modal(`<h3>Set appointment with ${esc(g.name)}</h3><label>Available dates</label><div class="cal">${days.map(d => `<button data-d="${d}" class="${d === day ? 'on' : ''}">${new Date(d).toDateString().slice(4, 10)}</button>`).join('') || '<p>No open dates.</p>'}</div>
     <label>Time</label><div class="cal">${(byDay[day] || []).map(t => `<button data-t="${t}" class="${t === slot ? 'on' : ''}">${t}</button>`).join('')}</div>
     <label>Your tour timeline</label><textarea id="tl" rows="3" placeholder="e.g. 9:00 meet at Fort Santiago → 11:00 Binondo lunch → 13:00 end"></textarea>
-    <label>Payment</label><select id="pm"><option value="cash">Cash to guide</option><option value="online">Pay through TourGuyed (held safely)</option></select>
+    <label>Payment</label><select id="pm"><option value="cash">Cash to guide</option><option value="online">Pay online — GCash, Maya, card, GrabPay (held safely)</option></select>
     <p class="muted" style="font-size:13px;margin-top:10px">${peso(g.price)} · Free cancellation until 30 min before. Later cancellation refunds half. Guide 30+ min late or no-show = full refund. No refund after you release payment.</p>
     <button class="btn" style="margin-top:12px" id="cf">Confirm request</button>`);
   const wire = () => {
