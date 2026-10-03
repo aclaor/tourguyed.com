@@ -21,9 +21,20 @@ function renderMenu() {
   const items = !ME ? [['#/start', 'Get started'], ['#/guides', 'Browse guides'], ['#/login', 'Sign in'], ['#/signup', 'Sign up']]
     : r === 'admin' ? [['#/admin', 'Overview'], ['#/admin-verify', 'Verify IDs & media'], ['#/admin-chats', 'All messages'], ['#/admin-tickets', 'Support tickets'], ['#/admin-users', 'Users'], ['#/admin-bookings', 'Bookings & fees'], ['#/admin-payouts', 'Guide payouts']]
     : r === 'guide' ? [['#/dashboard', 'Dashboard'], ['#/bookings', 'Bookings'], ['#/messages', 'Messages'], ['#/availability', 'Availability'], ['#/profile', 'My profile & package'], ['#/invite', 'Invite guides'], ['#/support', 'Customer service']]
-    : [['#/dashboard', 'Dashboard'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID / Become a guide'], ['#/support', 'Customer service']];
-  $('#menu').innerHTML = items.map(([h, t]) => `<a class="item ${cur === h ? 'on' : ''}" href="${h}">${t}</a>`).join('');
-  $('#who').innerHTML = ME ? `${esc(ME.user.name)} · ${r === 'guide' ? 'Tourguide' : r === 'admin' ? 'Admin' : 'Tourist'}<br><a href="#" onclick="logout();return false" style="color:inherit">Sign out</a>` : '';
+    : [['#/dashboard', 'Dashboard'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID'], ['#/support', 'Customer service']];
+  const mode = r === 'guide' ? `<div class="mode guide"><small>You're in</small><b>🧭 Tourguide mode</b><button class="switch" data-to="tourist">Switch to Tourist mode →</button></div>`
+    : r === 'tourist' ? `<div class="mode tourist"><small>You're in</small><b>🎒 Tourist mode</b><button class="switch" data-to="guide">${ME.user.has_guide ? 'Switch to Tourguide mode →' : 'Become a tourguide →'}</button></div>`
+    : r === 'admin' ? `<div class="mode admin"><small>You're in</small><b>🛡 Admin</b></div>` : '';
+  $('#menu').innerHTML = mode + items.map(([h, t]) => `<a class="item ${cur === h ? 'on' : ''}" href="${h}">${t}</a>`).join('');
+  document.querySelectorAll('.switch').forEach(b => b.onclick = () => switchRole(b.dataset.to));
+  document.body.dataset.mode = r || 'guest';
+  const mt = document.querySelector('.mobile-top .brand'); if (mt) mt.innerHTML = `<span class="logo">T</span><b>TourGuyed</b>${r && r !== 'admin' ? `<span class="pill ${r}">${r === 'guide' ? 'Tourguide' : 'Tourist'}</span>` : ''}`;
+  $('#who').innerHTML = ME ? `${esc(ME.user.name)}<br><small>${esc(ME.user.email)}</small><br><a href="#" onclick="logout();return false" style="color:inherit">Sign out</a>` : '';
+}
+async function switchRole(to) {
+  if (to === 'guide' && !ME.user.has_guide && !confirm('Set up a tourguide profile? You can switch back to Tourist mode anytime.')) return;
+  try { await api('/switch-role', { method: 'POST', body: { to } }); await loadMe(); toast(to === 'guide' ? '🧭 Now in Tourguide mode' : '🎒 Now in Tourist mode');
+    location.hash = to === 'guide' && !ME.guide?.price ? '#/profile' : '#/dashboard'; route(); } catch (e) { toast(e.message) }
 }
 async function logout() { await api('/logout', { method: 'POST' }).catch(() => {}); localStorage.removeItem('tg'); ME = null; location.hash = '#/login'; }
 const need = role => { if (!ME) { location.hash = '#/login'; return false } if (role && ME.user.role !== role) { V().innerHTML = '<p>Not available for your account type.</p>'; return false } return true; };
@@ -119,7 +130,7 @@ const views = {
     const done = b.filter(x => x.status === 'completed');
     const earned = done.reduce((s, x) => s + x.amount - x.platform_fee, 0);
     const feeDue = b.filter(x => x.pay_method === 'cash' && x.status === 'completed' && x.payout_status === 'cash_due').reduce((s, x) => s + x.platform_fee, 0);
-    V().innerHTML = `<h1>Hello, ${esc(ME.user.name.split(' ')[0])}</h1>
+    V().innerHTML = `<div class="mode-banner ${isG ? 'guide' : 'tourist'}">${isG ? '🧭 Tourguide dashboard — manage requests, availability and your package' : '🎒 Tourist dashboard — find guides and manage your trips'}<button class="switch2" data-to="${isG ? 'tourist' : 'guide'}">Switch to ${isG ? 'Tourist' : (ME.user.has_guide ? 'Tourguide' : 'Tourguide (set up)')} mode</button></div><h1>Hello, ${esc(ME.user.name.split(' ')[0])}</h1>
      ${!isG && ME.user.id_status === 'none' ? '<div class="panel">⚠ Upload your ID before booking. <a href="#/profile">Verify now</a></div>' : ''}
      ${isG && !ME.guide.price ? '<div class="panel">⚠ Finish your profile & set a package price so tourists can find you. <a href="#/profile">Set up profile</a></div>' : ''}${isG && !ME.guide.verified ? '<div class="panel">⏳ Tourists won\'t see you until your ID is verified by TourGuyed. Upload your ID in <a href="#/profile">My profile</a>.</div>' : ''}${isG ? '<div class="panel">📅 Tourists can only book times you open in <a href="#/availability">Availability</a>.</div>' : ''}
      <div class="stats">${isG ? `<div class="stat"><b>${b.filter(x => x.status === 'requested').length}</b>New requests</div><div class="stat"><b>★ ${ME.guide.rating}</b>${ME.guide.reviews} surveys</div>
@@ -127,6 +138,7 @@ const views = {
       : `<div class="stat"><b>${up.length}</b>Upcoming tours</div><div class="stat"><b>${done.length}</b>Completed</div><div class="stat"><b>${ME.user.id_status}</b>ID status</div><div class="stat"><b>${new Set(b.map(x => x.guide_id)).size}</b>Guides used</div>`}</div>
      ${isG && feeDue ? `<div class="panel">💵 Cash tours: you owe the platform <b>${peso(feeDue)}</b> (20%). Mark each as paid in Bookings.</div>` : ''}
      <h2 style="font-size:28px;margin:10px 0">Upcoming</h2>${bookingTable(up)}`;
+    document.querySelectorAll('.switch2').forEach(b => b.onclick = () => switchRole(b.dataset.to));
     wireBookingActions();
   },
   async bookings() {
@@ -211,8 +223,8 @@ const views = {
     const idBox = `<div class="panel"><h3>Identity verification</h3><p class="muted">Status: <b>${{ none: 'not uploaded yet', pending: 'uploaded — waiting for review', verified: '✓ verified', rejected: 'rejected — please upload a clearer photo' }[ME.user.id_status] || ME.user.id_status}</b>. Your ID is stored privately and never shown to ${ME.user.role === 'guide' ? 'tourists' : 'guides'} — they only see a verified badge.</p>
       <label>${ME.user.id_status === 'none' || ME.user.id_status === 'rejected' ? 'Choose a photo of your government or school ID — it uploads automatically' : 'Replace your ID (optional)'} <span class="req">*</span></label><input type="file" id="idf" accept="image/*${ME.user.storage === 'r2' ? ',application/pdf' : ''}"><p id="idmsg" class="muted" style="margin-top:6px"></p></div>`;
     if (ME.user.role === 'tourist') { V().innerHTML = '<h1>Verify ID</h1>' + idBox + `<p class="muted">Guides contact you via your private relay address: ${esc(ME.user.relay)}</p>
-      <div class="panel"><h3>Want to be a tourguide?</h3><p class="muted">Switch this account to a tourguide account. Keep the same email and password, then set up your places, package and verification.</p><button class="btn" style="margin-top:12px" id="bg">Become a tourguide</button></div>`;
-      $('#bg').onclick = async () => { if (!confirm('Switch this account to a tourguide account? You will no longer book tours with this account.')) return; try { await api('/become-guide', { method: 'POST' }); await loadMe(); toast('You are now a tourguide — set up your profile'); location.hash = '#/profile'; route(); } catch (e) { toast(e.message) } };
+      <div class="panel"><h3>Want to be a tourguide too?</h3><p class="muted">Use the same account. Set up your guide profile, and switch between Tourist and Tourguide mode anytime from the menu.</p><button class="btn" style="margin-top:12px" id="bg">${ME.user.has_guide ? 'Switch to Tourguide mode' : 'Become a tourguide'}</button></div>`;
+      $('#bg').onclick = () => switchRole('guide');
       return wireId(); }
     const g = ME.guide, L = a => (a || []).join(', ');
     const R = '<span class="req">*</span>';

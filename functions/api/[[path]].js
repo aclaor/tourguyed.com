@@ -216,8 +216,8 @@ export async function onRequest({ request: req, env, params }) {
     if (!u) return err('Please sign in', 401);
 
     if (route === 'GET /me') {
-      const g = u.role === 'guide' ? await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(u.id).first() : null;
-      return J({ user: { id: u.id, role: u.role, name: u.name, email: u.email, id_status: u.id_status, relay: relayEmail(u), storage: env.FILES ? 'r2' : 'db' }, guide: g && { ...shapeGuide(g), wise_email: g.wise_email } });
+      const g0 = await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(u.id).first(); const g = u.role === 'guide' ? g0 : null;
+      return J({ user: { id: u.id, role: u.role, name: u.name, email: u.email, id_status: u.id_status, relay: relayEmail(u), has_guide: !!g0, storage: env.FILES ? 'r2' : 'db' }, guide: g && { ...shapeGuide(g), wise_email: g.wise_email } });
     }
     if (route === 'GET /my-media') return J({ items: (await env.DB.prepare("SELECT id,kind,status,created_at FROM media WHERE user_id=? AND kind IN('photo','video') ORDER BY id DESC").bind(u.id).all()).results });
     if (route === 'GET /my-media/:id') { const m = await env.DB.prepare('SELECT * FROM media WHERE id=? AND user_id=?').bind(id, u.id).first(); return m ? serveFile(env, m, req) : err('Not found', 404); }
@@ -229,11 +229,12 @@ export async function onRequest({ request: req, env, params }) {
       if (g) await env.DB.prepare('UPDATE guides SET media=? WHERE user_id=?').bind(JSON.stringify(arr(g.media).filter(x => x !== `/api/media/${id}`)), u.id).run();
       return J({ ok: 1 });
     }
-    if (route === 'POST /become-guide' && u.role === 'tourist') {
-      const active = await env.DB.prepare("SELECT COUNT(*) n FROM bookings WHERE tourist_id=? AND status IN('requested','accepted','in_progress')").bind(u.id).first();
-      if (active.n) return err('Please finish or cancel your upcoming tours as a tourist first');
-      await env.DB.batch([env.DB.prepare("UPDATE users SET role='guide' WHERE id=?").bind(u.id), env.DB.prepare('INSERT OR IGNORE INTO guides(user_id) VALUES(?)').bind(u.id)]);
-      return J({ ok: 1 });
+    if ((route === 'POST /switch-role' || route === 'POST /become-guide') && u.role !== 'admin') {
+      const to = route === 'POST /become-guide' ? 'guide' : body.to;
+      if (!['tourist', 'guide'].includes(to)) return err('Bad role');
+      if (to === 'guide') await env.DB.prepare('INSERT OR IGNORE INTO guides(user_id) VALUES(?)').bind(u.id).run();
+      await env.DB.prepare('UPDATE users SET role=? WHERE id=?').bind(to, u.id).run();
+      return J({ ok: 1, role: to });
     }
     if (route === 'POST /logout') { await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(u.id).run(); return J({ ok: 1 }); }
 
@@ -284,6 +285,7 @@ export async function onRequest({ request: req, env, params }) {
       if (u.id_status === 'none') return err('Upload your ID before booking');
       const g = await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(body.guide_id).first();
       if (!g) return err('Guide not found');
+      if (g.user_id === u.id) return err("You can't book your own tour");
       const slot = await env.DB.prepare('SELECT 1 FROM availability WHERE guide_id=? AND day=? AND slot=?').bind(g.user_id, body.day, body.slot).first();
       if (!slot) return err('That time is not available');
       const pm = body.pay_method === 'online' ? 'online' : 'cash';
