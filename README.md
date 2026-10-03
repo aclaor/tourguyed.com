@@ -8,35 +8,27 @@ Tourist ↔ tourguide marketplace. Static site + Cloudflare Pages Functions (API
 - `functions/api/[[path]].js` — the API (sign up/in, guides, availability, bookings, payments state, chat, reviews, block, support, invites, uploads)
 - `schema.sql` — database tables + 4 demo guides (login: mia@demo.tourguyed.com / demo1234)
 
-## 1. Put it on GitHub
-1. Create an empty repo on github.com called `tourguyed`.
-2. In this folder (Command Prompt):
+## 1. Put it on GitHub (upload EVERYTHING, keep the folders)
+Your repo must look like this at the top level:
 ```
-git init
-git add .
-git commit -m "TourGuyed first version"
-git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/tourguyed.git
-git push -u origin main
+functions/api/[[path]].js
+public/index.html  public/app.html  public/css/style.css  public/js/app.js
+src/worker.js
+schema.sql  wrangler.toml  package.json  package-lock.json  README.md  .gitignore
 ```
+`index.html` must be inside `public/`, not at the repo root. Do NOT upload `node_modules/`.
 
 ## 2. Create the database (one time)
-```
-npm install
-npx wrangler login
-npx wrangler d1 create tourguyed-db
-```
-Copy the `database_id` it prints into `wrangler.toml`, then:
-```
-npm run db:remote
-```
-(Warning: `schema.sql` drops tables — run it only once on the live database.)
+Cloudflare dashboard → Storage & Databases → D1 → Create → name `tourguyed-db`.
+Copy its **Database ID** into `wrangler.toml` (replace PASTE-YOUR-D1-DATABASE-ID-HERE) and commit.
+Then open the database → Console → paste the whole `schema.sql` → Execute.
+(Run it only once — it resets the tables.)
 
-## 3. Deploy on Cloudflare Pages
-1. Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git → pick `tourguyed`.
-2. Build command: *(leave empty)* · Output directory: `public`.
-3. After the first deploy: Settings → Bindings → add **D1 database**, variable name `DB`, select `tourguyed-db`. Redeploy.
-4. Custom domains → add `tourguyed.com` (and `www.tourguyed.com`). If the domain is on Cloudflare DNS it connects automatically.
+## 3. Connect the Worker to GitHub
+Workers & Pages → `tourguyed` → Settings → Build → Connect repository → `aclaor/tourguyed.com`, branch `main`.
+Build command: empty · Deploy command: `npx wrangler deploy`.
+`wrangler.toml` already tells Cloudflare where the pages (`public/`), API (`src/worker.js`) and database (`DB`) are.
+Then Settings → Domains & Routes → Add custom domain → `tourguyed.com` (and `www.tourguyed.com`).
 
 Every `git push` now redeploys the site.
 
