@@ -37,6 +37,11 @@ function shapeGuide(g) {
   const total = g.accepted + g.declined; g.acceptance = total ? Math.round(g.accepted / total * 100) : 100;
   g.id = g.user_id; delete g.wise_email; return g;
 }
+async function resetLink(env, uid, origin) {
+  const t = crypto.randomUUID() + crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO resets(token,user_id,expires) VALUES(?,?,?)').bind(t, uid, Date.now() + 3600e3).run();
+  return `${origin}/app.html#/reset?t=${t}`;
+}
 async function serveFile(env, m) {
   if (m.data) {
     const [meta, b64] = m.data.split(',');
@@ -69,6 +74,19 @@ export async function onRequest({ request: req, env, params }) {
       const u = await env.DB.prepare('SELECT * FROM users WHERE email=?').bind((body.email || '').toLowerCase()).first();
       if (!u || !(await verify(body.password || '', u.pass))) return err('Wrong email or password', 401);
       return J({ token: await session(env, u.id) });
+    }
+    if (route === 'POST /forgot') {
+      const u = await env.DB.prepare('SELECT id FROM users WHERE email=?').bind((body.email || '').toLowerCase()).first();
+      if (u) { const link = await resetLink(env, u.id, url.origin); await notify(env, u.id, 'Reset your TourGuyed password', `Click to set a new password (valid 1 hour): ${link}`); }
+      return J({ ok: 1, emailed: !!env.RESEND_KEY }); // same answer whether or not the email exists
+    }
+    if (route === 'POST /reset') {
+      if ((body.password || '').length < 8) return err('Password must be 8+ characters');
+      const r = await env.DB.prepare('SELECT user_id FROM resets WHERE token=? AND expires>?').bind(body.token || '', Date.now()).first();
+      if (!r) return err('This reset link is invalid or expired');
+      await env.DB.prepare('UPDATE users SET pass=? WHERE id=?').bind(await hash(body.password), r.user_id).run();
+      await env.DB.batch([env.DB.prepare('DELETE FROM resets WHERE user_id=?').bind(r.user_id), env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(r.user_id)]);
+      return J({ token: await session(env, r.user_id) });
     }
     if (route === 'GET /guides') {
       const q = url.searchParams; const where = ['g.verified=1', 'g.price>0']; const b = [];
@@ -247,7 +265,7 @@ export async function onRequest({ request: req, env, params }) {
           cash_fees_due: await one("SELECT COALESCE(SUM(platform_fee),0) n FROM bookings WHERE status='completed' AND payout_status='cash_due'")
         });
       }
-      if (route === 'GET /admin/verifications') return J({ items: await all(`SELECT m.id,m.kind,m.status,m.created_at,m.user_id,u.name,u.email,u.role,u.id_status FROM media m JOIN users u ON u.id=m.user_id ORDER BY m.status='pending' DESC, m.id DESC LIMIT 200`) });
+      if (route === 'GET /admin/verifications') return J({ items: (await all(`SELECT m.id,m.kind,m.status,m.created_at,m.user_id,(m.data IS NOT NULL) stored,u.name,u.email,u.role,u.id_status FROM media m JOIN users u ON u.id=m.user_id ORDER BY m.status='pending' DESC, m.id DESC LIMIT 200`)).map(x => ({ ...x, stored: x.stored || !!env.FILES })) });
       if (route === 'GET /admin/file/:id') { const m = await env.DB.prepare('SELECT * FROM media WHERE id=?').bind(id).first(); return m ? serveFile(env, m) : err('Not found', 404); }
       if (route === 'POST /admin/media/:id') {
         const m = await env.DB.prepare('SELECT * FROM media WHERE id=?').bind(id).first(); if (!m) return err('Not found', 404);
@@ -278,6 +296,8 @@ export async function onRequest({ request: req, env, params }) {
       }
       if (route === 'GET /admin/users') return J({ items: await all(`SELECT u.id,u.role,u.name,u.email,u.id_status,u.created_at,g.verified,g.rating,g.reviews FROM users u LEFT JOIN guides g ON g.user_id=u.id WHERE u.role!='admin' ORDER BY u.id DESC LIMIT 500`) });
       if (route === 'GET /admin/bookings') return J({ items: await all(`SELECT b.*,gu.name guide_name,tu.name tourist_name FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id ORDER BY b.id DESC LIMIT 300`) });
+      if (route === 'POST /admin/media/:id/delete') { await env.DB.prepare('DELETE FROM media WHERE id=?').bind(id).run(); return J({ ok: 1 }); }
+      if (route === 'POST /admin/users/:id/reset') return J({ link: await resetLink(env, id, url.origin) });
       if (route === 'POST /admin/bookings/:id/fee_received') { await env.DB.prepare("UPDATE bookings SET payout_status='fee_received' WHERE id=?").bind(id).run(); return J({ ok: 1 }); }
     }
     return err('Not found', 404);

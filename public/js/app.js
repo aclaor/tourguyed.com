@@ -51,7 +51,7 @@ const views = {
   },
   login() {
     V().innerHTML = `<h1>Sign in</h1><div class="panel" style="max-width:420px"><label>Email</label><input id="e" type="email"><label>Password</label><input id="p" type="password">
-    <button class="btn" style="margin-top:16px" id="b">Sign in</button><p style="margin-top:12px">New here? <a href="#/signup">Create an account</a></p>
+    <button class="btn" style="margin-top:16px" id="b">Sign in</button><p style="margin-top:12px">New here? <a href="#/signup">Create an account</a> · <a href="#/forgot">Forgot password?</a></p>
     <p class="muted" style="font-size:13px;margin-top:10px">Demo guide: mia@demo.tourguyed.com / demo1234</p></div>`;
     $('#b').onclick = async () => { try { const d = await api('/login', { method: 'POST', body: { email: $('#e').value, password: $('#p').value } }); localStorage.tg = d.token; await loadMe(); location.hash = ME.user.role === 'admin' ? '#/admin' : '#/dashboard'; } catch (e) { toast(e.message) } };
   },
@@ -59,12 +59,20 @@ const views = {
     const q = qs();
     V().innerHTML = `<h1>Sign up</h1><div class="panel" style="max-width:460px"><label>I am a</label><select id="r"><option value="tourist">Tourist</option><option value="guide" ${q.role === 'guide' ? 'selected' : ''}>Tourguide</option></select>
     <label>Full name</label><input id="n"><label>Email</label><input id="e" type="email"><label>Password (8+ characters)</label><input id="p" type="password">
-    <label style="font-weight:400"><input type="checkbox" id="t" style="width:auto"> I agree to be respectful and professional and accept the TourGuyed cancellation, refund and 20% platform fee rules.</label>
+    <label style="font-weight:400"><input type="checkbox" id="t" style="width:auto"> I agree to be respectful and professional and accept the TourGuyed <a href="/terms.html" target="_blank">Terms</a> (cancellation, refund and 20% platform fee rules) and <a href="/privacy.html" target="_blank">Privacy Policy</a>.</label>
     <button class="btn" style="margin-top:16px" id="b">Create account</button></div>`;
     $('#b').onclick = async () => {
       if (!$('#t').checked) return toast('Please accept the rules');
       try { const d = await api('/signup', { method: 'POST', body: { role: $('#r').value, name: $('#n').value, email: $('#e').value, password: $('#p').value, invited_by: q.ref } }); localStorage.tg = d.token; await loadMe(); location.hash = '#/profile'; } catch (e) { toast(e.message) }
     };
+  },
+  forgot() {
+    V().innerHTML = `<h1>Forgot password</h1><div class="panel" style="max-width:420px"><label>Your email</label><input id="e" type="email"><button class="btn" style="margin-top:14px" id="b">Send reset link</button><p id="m" class="muted" style="margin-top:12px"></p></div>`;
+    $('#b').onclick = async () => { const d = await api('/forgot', { method: 'POST', body: { email: $('#e').value } }); $('#m').textContent = d.emailed ? 'If that email has an account, a reset link is on its way. Check your inbox and spam.' : 'Email sending is not set up yet. Please contact customer service at support@tourguyed.com to reset your password.'; };
+  },
+  reset() {
+    V().innerHTML = `<h1>Set a new password</h1><div class="panel" style="max-width:420px"><label>New password (8+ characters)</label><input id="p" type="password"><button class="btn" style="margin-top:14px" id="b">Save password</button></div>`;
+    $('#b').onclick = async () => { try { const d = await api('/reset', { method: 'POST', body: { token: qs().t, password: $('#p').value } }); localStorage.tg = d.token; await loadMe(); toast('Password updated'); location.hash = '#/dashboard'; } catch (e) { toast(e.message) } };
   },
   async guides() {
     const q = qs(); V().innerHTML = '<h1>Tourguides</h1><p class="muted">Loading…</p>';
@@ -211,13 +219,14 @@ const views = {
     V().innerHTML = `<h1>Verify IDs & media</h1>${items.length ? `<table><tr><th>User</th><th>Upload</th><th>Status</th><th>Actions</th></tr>${items.map(m => `<tr>
       <td><b>${esc(m.name)}</b><br><small class="muted">${esc(m.email)} · ${m.role}</small></td><td>${label[m.kind] || m.kind}<br><small class="muted">${m.created_at}</small></td>
       <td><span class="status ${m.status === 'approved' ? 's-completed' : m.status === 'rejected' ? 's-declined' : 's-requested'}">${m.status}</span></td>
-      <td style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ghost" data-view="${m.id}" data-kind="${m.kind}">View</button>${m.status === 'pending' ? `<button class="btn sm" data-dec="approve" data-id="${m.id}">Approve</button><button class="btn sm ghost" data-dec="reject" data-id="${m.id}">Reject</button>` : ''}</td></tr>`).join('')}</table>` : '<p class="muted">Nothing uploaded yet.</p>'}`;
+      <td style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn sm ghost" data-view="${m.id}" data-kind="${m.kind}">View</button>${m.stored && m.status === 'pending' ? `<button class="btn sm" data-dec="approve" data-id="${m.id}">Approve</button><button class="btn sm ghost" data-dec="reject" data-id="${m.id}">Reject</button>` : ''}${!m.stored ? '<small class="muted">file missing — ask user to re-upload</small>' : ''}<button class="btn sm ghost" data-del="${m.id}">Remove</button></td></tr>`).join('')}</table>` : '<p class="muted">Nothing uploaded yet.</p>'}`;
     document.querySelectorAll('[data-view]').forEach(b => b.onclick = async () => {
       const r = await fetch('/api/admin/file/' + b.dataset.view, { headers: { authorization: 'Bearer ' + localStorage.tg } });
       if (!r.ok) return toast('File not stored (uploaded before storage was enabled)');
       const url = URL.createObjectURL(await r.blob()), type = r.headers.get('content-type') || '';
       modal(type.startsWith('video') ? `<video src="${url}" controls style="width:100%"></video>` : type.includes('pdf') ? `<iframe src="${url}" style="width:100%;height:70vh;border:0"></iframe>` : `<img src="${url}" style="width:100%;border-radius:12px">`);
     });
+    document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (!confirm('Remove this upload record?')) return; await api('/admin/media/' + b.dataset.del + '/delete', { method: 'POST' }); toast('Removed'); route(); });
     document.querySelectorAll('[data-dec]').forEach(b => b.onclick = async () => {
       const note = b.dataset.dec === 'reject' ? (prompt('Reason (sent to the user):') || '') : '';
       await api('/admin/media/' + b.dataset.id, { method: 'POST', body: { decision: b.dataset.dec, note } }); toast(b.dataset.dec === 'approve' ? 'Approved' : 'Rejected'); route();
@@ -242,8 +251,9 @@ const views = {
   },
   async 'admin-users'() {
     if (!need('admin')) return; const { items } = await api('/admin/users');
-    V().innerHTML = `<h1>Users</h1><table><tr><th>Name</th><th>Email</th><th>Role</th><th>ID</th><th>Rating</th><th>Joined</th></tr>${items.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td>
-      <td><span class="status ${u.id_status === 'verified' ? 's-completed' : u.id_status === 'pending' ? 's-requested' : 's-declined'}">${u.id_status}</span></td><td>${u.role === 'guide' ? `★ ${u.rating} (${u.reviews})` : '—'}</td><td>${(u.created_at || '').slice(0, 10)}</td></tr>`).join('')}</table>`;
+    V().innerHTML = `<h1>Users</h1><table><tr><th>Name</th><th>Email</th><th>Role</th><th>ID</th><th>Rating</th><th>Joined</th><th></th></tr>${items.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td>
+      <td><span class="status ${u.id_status === 'verified' ? 's-completed' : u.id_status === 'pending' ? 's-requested' : 's-declined'}">${u.id_status}</span></td><td>${u.role === 'guide' ? `★ ${u.rating} (${u.reviews})` : '—'}</td><td>${(u.created_at || '').slice(0, 10)}</td><td><button class="btn sm ghost" data-rs="${u.id}">Reset link</button></td></tr>`).join('')}</table>`;
+    document.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => { const d = await api('/admin/users/' + b.dataset.rs + '/reset', { method: 'POST' }); modal(`<h3>Password reset link</h3><p class="muted">Send this to the user. It works once and expires in 1 hour.</p><input value="${esc(d.link)}" onclick="this.select()" readonly>`); });
   },
   async 'admin-bookings'() {
     if (!need('admin')) return; const { items } = await api('/admin/bookings');
