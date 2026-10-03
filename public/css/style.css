@@ -149,3 +149,7 @@ tr:last-child td{border-bottom:0}
  .wrap{padding:0 16px}.ticket .left{padding:34px 24px}.cloud{transform:scale(.6)}
 }
 @media(max-width:560px){.grid3,.grid4{grid-template-columns:1fr}.nav ul{display:none}table{display:block;overflow-x:auto}.strip .photo{flex-basis:80%}}
+.req{color:#ff8a7a;font-weight:700}
+.invalid{border-color:#ff8a7a !important;box-shadow:0 0 0 3px rgba(255,138,122,.25)}
+label.invalid{border:0 !important;box-shadow:none;color:#ff8a7a}
+input[type=file]{padding:8px}

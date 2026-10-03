@@ -58,11 +58,14 @@ const views = {
   signup() {
     const q = qs();
     V().innerHTML = `<h1>Sign up</h1><div class="panel" style="max-width:460px"><label>I am a</label><select id="r"><option value="tourist">Tourist</option><option value="guide" ${q.role === 'guide' ? 'selected' : ''}>Tourguide</option></select>
-    <label>Full name</label><input id="n"><label>Email</label><input id="e" type="email"><label>Password (8+ characters)</label><input id="p" type="password">
+    <label>Full name <span class="req">*</span></label><input id="n" required><label>Email <span class="req">*</span></label><input id="e" type="email" required><label>Password (8+ characters) <span class="req">*</span></label><input id="p" type="password" required>
     <label style="font-weight:400"><input type="checkbox" id="t" style="width:auto"> I agree to be respectful and professional and accept the TourGuyed <a href="/terms.html" target="_blank">Terms</a> (cancellation, refund and 20% platform fee rules) and <a href="/privacy.html" target="_blank">Privacy Policy</a>.</label>
     <button class="btn" style="margin-top:16px" id="b">Create account</button></div>`;
     $('#b').onclick = async () => {
-      if (!$('#t').checked) return toast('Please accept the rules');
+      const miss = ['n', 'e', 'p'].filter(k => !$('#' + k).value.trim()); document.querySelectorAll('.invalid').forEach(el => el.classList.remove('invalid')); miss.forEach(k => $('#' + k).classList.add('invalid'));
+      if (miss.length) return toast('Please fill in the fields marked in red');
+      if ($('#p').value.length < 8) { $('#p').classList.add('invalid'); return toast('Password must be at least 8 characters'); }
+      if (!$('#t').checked) return toast('Please accept the Terms and Privacy Policy');
       try { const d = await api('/signup', { method: 'POST', body: { role: $('#r').value, name: $('#n').value, email: $('#e').value, password: $('#p').value, invited_by: q.ref } }); localStorage.tg = d.token; await loadMe(); location.hash = '#/profile'; } catch (e) { toast(e.message) }
     };
   },
@@ -151,44 +154,52 @@ const views = {
   },
   async profile() {
     if (!need()) return;
-    const idBox = `<div class="panel"><h3>Identity verification</h3><p class="muted">Status: <b>${ME.user.id_status}</b>. Your ID is stored privately and never shown to ${ME.user.role === 'guide' ? 'tourists' : 'guides'} — they only see a verified badge.</p>
-      <label>Government or school ID</label><input type="file" id="idf" accept="image/*,application/pdf"><button class="btn sm" style="margin-top:8px" id="idb">Upload ID</button></div>`;
+    const idBox = `<div class="panel"><h3>Identity verification</h3><p class="muted">Status: <b>${{ none: 'not uploaded yet', pending: 'uploaded — waiting for review', verified: '✓ verified', rejected: 'rejected — please upload a clearer photo' }[ME.user.id_status] || ME.user.id_status}</b>. Your ID is stored privately and never shown to ${ME.user.role === 'guide' ? 'tourists' : 'guides'} — they only see a verified badge.</p>
+      <label>Government or school ID <span class="req">*</span></label><input type="file" id="idf" accept="image/*"><button class="btn sm" style="margin-top:8px" id="idb">Upload ID</button></div>`;
     if (ME.user.role === 'tourist') { V().innerHTML = '<h1>Verify ID</h1>' + idBox + `<p class="muted">Guides contact you via your private relay address: ${esc(ME.user.relay)}</p>
       <div class="panel"><h3>Want to be a tourguide?</h3><p class="muted">Switch this account to a tourguide account. Keep the same email and password, then set up your places, package and verification.</p><button class="btn" style="margin-top:12px" id="bg">Become a tourguide</button></div>`;
       $('#bg').onclick = async () => { if (!confirm('Switch this account to a tourguide account? You will no longer book tours with this account.')) return; try { await api('/become-guide', { method: 'POST' }); await loadMe(); toast('You are now a tourguide — set up your profile'); location.hash = '#/profile'; route(); } catch (e) { toast(e.message) } };
       return wireId(); }
     const g = ME.guide, L = a => (a || []).join(', ');
-    V().innerHTML = `<h1>My profile & package</h1>${idBox}<div class="panel"><div class="two" style="gap:16px;align-items:start"><div>
-      <label>Profile photo URL</label><input id="photo" value="${esc(g.photo)}"><label>Short bio</label><textarea id="bio" rows="3">${esc(g.bio)}</textarea>
-      <label>Gender</label><select id="gender">${['Female', 'Male', 'Other'].map(x => `<option ${g.gender === x ? 'selected' : ''}>${x}</option>`)}</select>
-      <label>Occupation</label><input id="occupation" value="${esc(g.occupation)}">
-      <label>Are you a student?</label><select id="is_student"><option value="0">No</option><option value="1" ${g.is_student ? 'selected' : ''}>Yes</option></select>
-      <label>School</label><input id="school" value="${esc(g.school)}">
-      <label style="font-weight:400"><input type="checkbox" id="school_permission" style="width:auto" ${g.school_permission ? 'checked' : ''}> I have permission from my school to give tours (students only)</label>
-      <label>School permission document</label><input type="file" id="schf"></div><div>
-      <label>City / area you guide in</label><input id="location" value="${esc(g.location)}">
-      <label>Exact places you can take tourists (comma separated)</label><input id="places" value="${esc(L(g.places))}">
-      <label>Expertise (comma separated)</label><input id="activities" value="${esc(L(g.activities))}">
-      <label>Languages you speak & understand</label><input id="languages" value="${esc(L(g.languages))}">
-      <label>How will you take tourists there?</label><input id="transport" value="${esc(g.transport)}">
-      <label>Package name</label><input id="package_title" value="${esc(g.package_title)}">
-      <div class="two" style="gap:10px"><div><label>Price (₱)</label><input id="price" type="number" value="${g.price}"></div><div><label>Hours</label><input id="duration_hours" type="number" value="${g.duration_hours}"></div></div>
-      <label>Included (comma separated)</label><input id="includes" value="${esc(L(g.includes))}">
-      <label>Not included (comma separated)</label><input id="excludes" value="${esc(L(g.excludes))}">
-      <label style="font-weight:400"><input type="checkbox" id="offers_local" style="width:auto" ${g.offers_local ? 'checked' : ''}> I can arrange other local guides</label>
-      <label>Wise account email (for payouts)</label><input id="wise_email" value="${esc(g.wise_email)}"></div></div>
+    const R = '<span class="req">*</span>';
+    V().innerHTML = `<h1>My profile & package</h1>${idBox}<div class="panel"><p class="muted" style="margin-bottom:6px">Fields marked ${R} are required.</p><div class="two" style="gap:16px;align-items:start"><div>
+      <label>Profile photo ${R}</label><div style="display:flex;gap:12px;align-items:center">${g.photo ? `<img src="${esc(g.photo)}" style="width:64px;height:64px;border-radius:50%;border:2px solid #fff">` : ''}<input type="file" id="pf" accept="image/*"></div>
+      <label>Short bio ${R}</label><textarea id="bio" rows="3" required>${esc(g.bio)}</textarea>
+      <label>Gender ${R}</label><select id="gender" required><option value="">Select…</option>${['Female', 'Male', 'Other'].map(x => `<option ${g.gender === x ? 'selected' : ''}>${x}</option>`)}</select>
+      <label>Occupation ${R}</label><input id="occupation" required value="${esc(g.occupation)}">
+      <label>Are you a student? ${R}</label><select id="is_student"><option value="0">No</option><option value="1" ${g.is_student ? 'selected' : ''}>Yes</option></select>
+      <div id="stu"><label>School ${R}</label><input id="school" value="${esc(g.school)}">
+      <label style="font-weight:400"><input type="checkbox" id="school_permission" ${g.school_permission ? 'checked' : ''}> I have permission from my school to give tours ${R}</label>
+      <label>School permission document</label><input type="file" id="schf" accept="image/*"></div></div><div>
+      <label>City / area you guide in ${R}</label><input id="location" required value="${esc(g.location)}">
+      <label>Exact places you can take tourists ${R} <small class="muted">(comma separated)</small></label><input id="places" required value="${esc(L(g.places))}">
+      <label>Expertise ${R} <small class="muted">(comma separated)</small></label><input id="activities" required value="${esc(L(g.activities))}">
+      <label>Languages you speak & understand ${R}</label><input id="languages" required value="${esc(L(g.languages))}">
+      <label>How will you take tourists there? ${R}</label><input id="transport" required value="${esc(g.transport)}">
+      <label>Package name ${R}</label><input id="package_title" required value="${esc(g.package_title)}">
+      <div class="two" style="gap:10px"><div><label>Price (₱) ${R}</label><input id="price" type="number" min="1" required value="${g.price || ''}"></div><div><label>Hours ${R}</label><input id="duration_hours" type="number" min="1" required value="${g.duration_hours || ''}"></div></div>
+      <label>Included ${R} <small class="muted">(comma separated)</small></label><input id="includes" required value="${esc(L(g.includes))}">
+      <label>Not included ${R} <small class="muted">(comma separated)</small></label><input id="excludes" required value="${esc(L(g.excludes))}">
+      <label style="font-weight:400"><input type="checkbox" id="offers_local" ${g.offers_local ? 'checked' : ''}> I can arrange other local guides</label>
+      <label>Wise account email (for payouts) ${R}</label><input id="wise_email" type="email" required value="${esc(g.wise_email)}"></div></div>
       <button class="btn" style="margin-top:16px" id="save">Save profile</button></div>
-      <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot.</p><input type="file" id="mf" accept="video/*,image/*" multiple><button class="btn sm" style="margin-top:8px" id="mb">Upload</button></div>`;
+      <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically; videos must be under 1MB for now.</p><input type="file" id="mf" accept="video/*,image/*" multiple><button class="btn sm" style="margin-top:8px" id="mb">Upload</button></div>`;
     wireId();
+    const stu = () => { const on = $('#is_student').value === '1'; $('#stu').style.display = on ? '' : 'none'; $('#school').required = on; }; $('#is_student').onchange = stu; stu();
+    $('#pf').onchange = async () => { try { await upload('profile', $('#pf').files[0]); await loadMe(); toast('Profile photo updated'); route(); } catch (e) { toast(e.message) } };
     $('#save').onclick = async () => {
-      const s = k => $('#' + k).value, list = k => s(k).split(',').map(x => x.trim()).filter(Boolean);
-      const body = { photo: s('photo'), bio: s('bio'), gender: s('gender'), occupation: s('occupation'), school: s('school'), is_student: +s('is_student'), school_permission: $('#school_permission').checked ? 1 : 0,
-        location: s('location'), transport: s('transport'), package_title: s('package_title'), price: +s('price'), duration_hours: +s('duration_hours'), offers_local: $('#offers_local').checked ? 1 : 0, wise_email: s('wise_email'),
+      const bad = [...document.querySelectorAll('.main [required]')].filter(el => el.offsetParent && !String(el.value).trim());
+      document.querySelectorAll('.invalid').forEach(el => el.classList.remove('invalid')); bad.forEach(el => el.classList.add('invalid'));
+      if (!g.photo && !$('#pf').files[0]) { $('#pf').classList.add('invalid'); bad.push($('#pf')); }
+      if ($('#is_student').value === '1' && !$('#school_permission').checked) { $('#school_permission').parentElement.classList.add('invalid'); bad.push($('#school_permission')); }
+      if (bad.length) { bad[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); return toast(`Please fill in the ${bad.length} required field${bad.length > 1 ? 's' : ''} marked in red`); }
+      const v = k => $('#' + k).value, list = k => v(k).split(',').map(x => x.trim()).filter(Boolean);
+      const body = { bio: v('bio'), gender: v('gender'), occupation: v('occupation'), school: v('school'), is_student: +v('is_student'), school_permission: $('#school_permission').checked ? 1 : 0,
+        location: v('location'), transport: v('transport'), package_title: v('package_title'), price: +v('price'), duration_hours: +v('duration_hours'), offers_local: $('#offers_local').checked ? 1 : 0, wise_email: v('wise_email'),
         places: list('places'), activities: list('activities'), languages: list('languages'), includes: list('includes'), excludes: list('excludes') };
-      if (!body.wise_email) return toast('A Wise account is required to receive payments');
-      try { await api('/guide/profile', { method: 'PUT', body }); if ($('#schf').files[0]) await upload('school', $('#schf').files[0]); await loadMe(); toast('Saved'); } catch (e) { toast(e.message) }
+      try { await api('/guide/profile', { method: 'PUT', body }); if ($('#schf').files[0]) await upload('school', $('#schf').files[0]); await loadMe(); toast('Profile saved'); } catch (e) { toast(e.message) }
     };
-    $('#mb').onclick = async () => { for (const f of $('#mf').files) await upload(f.type.startsWith('video') ? 'video' : 'photo', f); toast('Uploaded — pending review'); };
+    $('#mb').onclick = async () => { if (!$('#mf').files.length) return toast('Choose photos or videos first'); try { for (const f of $('#mf').files) await upload(f.type.startsWith('video') ? 'video' : 'photo', f); toast('Uploaded — TourGuyed will review them shortly'); $('#mf').value = ''; } catch (e) { toast(e.message) } };
   },
   async availability() {
     if (!need('guide')) return;
@@ -279,8 +290,20 @@ const views = {
   },
 };
 
-async function upload(kind, f) { if (f.size > 20e6) throw new Error('Max 20MB per file'); return api('/upload', { method: 'POST', body: { kind, name: f.name, dataUrl: await fileToDataUrl(f) } }); }
-function wireId() { $('#idb').onclick = async () => { const f = $('#idf').files[0]; if (!f) return toast('Choose a file'); try { await upload('id', f); await loadMe(); toast('ID uploaded — under review'); route(); } catch (e) { toast(e.message) } }; }
+async function shrinkImage(f, max = 1600, q = 0.82) {
+  const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = URL.createObjectURL(f); });
+  const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas');
+  c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', q);
+}
+async function upload(kind, f) {
+  if (f.size > 50e6) throw new Error('File is too big');
+  let dataUrl;
+  if (f.type.startsWith('image/')) { dataUrl = await shrinkImage(f); if (dataUrl.length > 1.8e6) dataUrl = await shrinkImage(f, 1100, 0.7); }
+  else { if (f.size > 1.3e6) throw new Error(f.type.startsWith('video') ? 'Videos must be under 1MB for now — trim it or upload photos instead' : 'File must be under 1MB — take a photo of it instead'); dataUrl = await fileToDataUrl(f); }
+  return api('/upload', { method: 'POST', body: { kind, name: f.name.replace(/\.\w+$/, '') + (f.type.startsWith('image/') ? '.jpg' : ''), dataUrl } });
+}
+function wireId() { $('#idb').onclick = async () => { const f = $('#idf').files[0]; if (!f) return toast('Choose a photo of your ID first'); $('#idb').disabled = true; $('#idb').textContent = 'Uploading…'; try { await upload('id', f); await loadMe(); toast('ID uploaded — we will review it shortly'); route(); } catch (e) { toast(e.message); $('#idb').disabled = false; $('#idb').textContent = 'Upload ID'; } }; }
 
 const payLabel = s => ({ unpaid: 'not paid yet', held: 'paid · held safely', partial_released: '50% released to guide', released: 'fully released', refunded: 'refunded', partial_refund: 'half refunded', cash_due: 'cash · fee due', fee_reported: 'cash · fee reported', fee_received: 'cash · fee received', none: '—' }[s] || s);
 function bookingTable(list) {

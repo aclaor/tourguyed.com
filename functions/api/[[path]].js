@@ -82,8 +82,18 @@ async function serveFile(env, m) {
 }
 const minsUntil = b => (new Date(`${b.day}T${b.slot}:00+08:00`) - Date.now()) / 60000;
 
+let migrated = false;
+async function migrate(env) {
+  if (migrated) return; migrated = true;
+  const stmts = ["ALTER TABLE media ADD COLUMN data TEXT", "ALTER TABLE media ADD COLUMN status TEXT DEFAULT 'pending'",
+    "ALTER TABLE bookings ADD COLUMN pm_checkout TEXT", "ALTER TABLE bookings ADD COLUMN pm_payment TEXT", "ALTER TABLE bookings ADD COLUMN guide_paid REAL DEFAULT 0",
+    "CREATE TABLE IF NOT EXISTS resets(token TEXT PRIMARY KEY, user_id INTEGER, expires INTEGER)"];
+  for (const q of stmts) await env.DB.prepare(q).run().catch(() => {}); // ignore 'duplicate column'
+}
+
 export async function onRequest({ request: req, env, params }) {
   if (!env.DB) return err('Database not bound. See README.', 500);
+  await migrate(env);
   const p = params.path || [], M = req.method, url = new URL(req.url);
   if (p.join('/') === 'paymongo/webhook' && M === 'POST') {
     const raw = await req.text(), sig = Object.fromEntries((req.headers.get('paymongo-signature') || '').split(',').map(x => x.split('=')));
@@ -158,7 +168,7 @@ export async function onRequest({ request: req, env, params }) {
     }
 
     if (route === 'GET /media/:id') {
-      const m = await env.DB.prepare("SELECT * FROM media WHERE id=? AND status='approved' AND kind IN('photo','video')").bind(id).first();
+      const m = await env.DB.prepare("SELECT * FROM media WHERE id=? AND status='approved' AND kind IN('photo','video','profile')").bind(id).first();
       if (!m) return err('Not found', 404);
       return serveFile(env, m);
     }
@@ -188,6 +198,11 @@ export async function onRequest({ request: req, env, params }) {
       for (const k of n) if (k in body) { sets.push(`${k}=?`); vals.push(+body[k] || 0); }
       for (const k of a) if (k in body) { sets.push(`${k}=?`); vals.push(JSON.stringify(body[k] || [])); }
       if (body.is_student && !body.school_permission) return err('Student guides must confirm school permission');
+      const need = { bio: 'Short bio', gender: 'Gender', occupation: 'Occupation', location: 'City / area', transport: 'Transport', package_title: 'Package name', wise_email: 'Wise email' };
+      for (const [k, label] of Object.entries(need)) if (!String(body[k] || '').trim()) return err(label + ' is required');
+      for (const [k, label] of Object.entries({ places: 'Places', activities: 'Expertise', languages: 'Languages', includes: 'Included', excludes: 'Not included' })) if (!(body[k] || []).length) return err(label + ' is required');
+      if (!(+body.price > 0)) return err('Price is required'); if (!(+body.duration_hours > 0)) return err('Hours is required');
+      if (body.is_student && !String(body.school || '').trim()) return err('School is required for student guides');
       if (sets.length) await env.DB.prepare(`UPDATE guides SET ${sets.join(',')} WHERE user_id=?`).bind(...vals, u.id).run();
       return J({ ok: 1 });
     }
@@ -199,7 +214,7 @@ export async function onRequest({ request: req, env, params }) {
     }
     if (route === 'POST /upload') {
       // body: {kind:'id'|'video'|'photo'|'school', name, dataUrl}
-      const kind = body.kind; if (!['id', 'video', 'photo', 'school'].includes(kind)) return err('Bad kind');
+      const kind = body.kind; if (!['id', 'video', 'photo', 'school', 'profile'].includes(kind)) return err('Bad kind');
       const key = `${u.id}/${kind}/${Date.now()}-${(body.name || 'file').replace(/[^\w.-]/g, '')}`;
       if (env.FILES && body.dataUrl) {
         const [meta, b64] = body.dataUrl.split(',');
@@ -208,10 +223,11 @@ export async function onRequest({ request: req, env, params }) {
       let inline = null;
       if (!env.FILES) {
         if (!body.dataUrl) return err('No file');
-        if (body.dataUrl.length > 1400000) return err('File too large (max ~1MB until file storage is enabled). Try a smaller photo.');
+        if (body.dataUrl.length > 1900000) return err('File too large. Please use a smaller photo or a short video under 1MB.');
         inline = body.dataUrl;
       }
-      await env.DB.prepare("INSERT INTO media(user_id,kind,key,data,status) VALUES(?,?,?,?,'pending')").bind(u.id, kind, key, inline).run();
+      const r = await env.DB.prepare("INSERT INTO media(user_id,kind,key,data,status) VALUES(?,?,?,?,?)").bind(u.id, kind, key, inline, kind === 'profile' ? 'approved' : 'pending').run();
+      if (kind === 'profile') { await env.DB.prepare('UPDATE guides SET photo=? WHERE user_id=?').bind(`/api/media/${r.meta.last_row_id}`, u.id).run(); return J({ ok: 1, url: `/api/media/${r.meta.last_row_id}` }); }
       if (kind === 'id') await env.DB.prepare("UPDATE users SET id_status='pending' WHERE id=?").bind(u.id).run();
       return J({ ok: 1, key });
     }
