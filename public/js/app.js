@@ -183,7 +183,8 @@ const views = {
       <label style="font-weight:400"><input type="checkbox" id="offers_local" ${g.offers_local ? 'checked' : ''}> I can arrange other local guides</label>
       <label>Wise account email (for payouts) ${R}</label><input id="wise_email" type="email" required value="${esc(g.wise_email)}"></div></div>
       <button class="btn" style="margin-top:16px" id="save">Save profile</button></div>
-      <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically. ${ME.user.storage === 'r2' ? 'Videos up to 50MB, max 30 uploads.' : 'Videos must be under 1MB for now.'}</p><input type="file" id="mf" accept="video/*,image/*" multiple><button class="btn sm" style="margin-top:8px" id="mb">Upload</button></div>`;
+      <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically. ${ME.user.storage === 'r2' ? 'Videos up to 50MB, max 30 uploads.' : 'Videos must be under 1MB for now.'}</p><input type="file" id="mf" accept="video/*,image/*,.heic,.mov" multiple><button class="btn sm" style="margin-top:8px" id="mb">Upload</button>
+      <h3 style="margin-top:22px;font-size:18px">My uploads</h3><div id="gal" class="grid4" style="margin-top:12px"><p class="muted">Loading…</p></div></div>`;
     wireId();
     const stu = () => { const on = $('#is_student').value === '1'; $('#stu').style.display = on ? '' : 'none'; $('#school').required = on; }; $('#is_student').onchange = stu; stu();
     $('#pf').onchange = async () => { try { await upload('profile', $('#pf').files[0]); await loadMe(); toast('Profile photo updated'); route(); } catch (e) { toast(e.message) } };
@@ -199,9 +200,21 @@ const views = {
         places: list('places'), activities: list('activities'), languages: list('languages'), includes: list('includes'), excludes: list('excludes') };
       try { await api('/guide/profile', { method: 'PUT', body }); if ($('#schf').files[0]) await upload('school', $('#schf').files[0]); await loadMe(); toast('Profile saved'); } catch (e) { toast(e.message) }
     };
+    const gallery = async () => {
+      const { items } = await api('/my-media'); const st = { pending: ['Waiting for review', 's-requested'], approved: ['Live on your profile', 's-completed'], rejected: ['Rejected', 's-declined'] };
+      $('#gal').innerHTML = items.map(m => `<div class="card" style="padding:8px"><div data-src="/api/my-media/${m.id}" data-kind="${m.kind}" style="height:130px;border-radius:12px;overflow:hidden;background:rgba(0,0,0,.25);display:grid;place-items:center"><small class="muted">${m.kind}</small></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:6px"><span class="status ${(st[m.status] || [])[1] || ''}">${(st[m.status] || [m.status])[0]}</span><button class="btn sm ghost" data-rm="${m.id}">Delete</button></div></div>`).join('') || '<p class="muted">No photos or videos yet.</p>';
+      for (const el of document.querySelectorAll('[data-src]')) {
+        const r = await fetch(el.dataset.src, { headers: { authorization: 'Bearer ' + localStorage.tg } }); if (!r.ok) continue;
+        const u = URL.createObjectURL(await r.blob());
+        el.innerHTML = el.dataset.kind === 'video' ? `<video src="${u}" controls muted style="width:100%;height:100%;object-fit:cover"></video>` : `<img src="${u}" style="width:100%;height:100%">`;
+      }
+      document.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => { if (!confirm('Delete this upload?')) return; await api(`/my-media/${b.dataset.rm}/delete`, { method: 'POST' }); toast('Deleted'); gallery(); });
+    };
+    gallery();
     $('#mb').onclick = async () => { const fs = [...$('#mf').files]; if (!fs.length) return toast('Choose photos or videos first'); $('#mb').disabled = true;
       try { for (const [i, f] of fs.entries()) { $('#mb').textContent = `Uploading ${i + 1}/${fs.length}…`; await upload(f.type.startsWith('video') ? 'video' : 'photo', f); } toast('Uploaded — TourGuyed will review them shortly'); $('#mf').value = ''; } catch (e) { toast(e.message) }
-      $('#mb').disabled = false; $('#mb').textContent = 'Upload'; };
+      $('#mb').disabled = false; $('#mb').textContent = 'Upload'; gallery(); };
   },
   async availability() {
     if (!need('guide')) return;
@@ -300,17 +313,20 @@ async function shrinkImage(f, max = 1600, q = 0.82) {
 }
 async function upload(kind, f) {
   if (!f) throw new Error('Choose a file first');
-  const isImg = f.type.startsWith('image/'), isVid = f.type.startsWith('video/');
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+  const isVid = f.type.startsWith('video/') || ['mp4', 'mov', 'm4v', 'webm', '3gp'].includes(ext);
+  const isImg = !isVid && (f.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp'].includes(ext));
+  if (!isImg && !isVid && f.type !== 'application/pdf') throw new Error(`"${f.name}" is not a photo or video`);
   if (ME?.user.storage === 'r2') {
     // direct upload to Cloudflare R2: photos are resized first, videos up to 50MB
     let blob = f, name = f.name;
-    if (isImg) { blob = await (await fetch(await shrinkImage(f, 2000, 0.85))).blob(); name = f.name.replace(/\.\w+$/, '') + '.jpg'; }
+    if (isImg) { try { blob = await (await fetch(await shrinkImage(f, 2000, 0.85))).blob(); name = f.name.replace(/\.\w+$/, '') + '.jpg'; } catch { if (f.size > 25 * 1024 ** 2) throw new Error(`"${f.name}" is too large — max 25MB`); } }
     if (isVid && f.size > 50 * 1024 ** 2) throw new Error('Videos must be under 50MB — trim it a little');
-    const r = await fetch(`/api/upload?kind=${kind}&name=${encodeURIComponent(name)}`, { method: 'PUT', headers: { 'content-type': blob.type || f.type, authorization: 'Bearer ' + localStorage.tg }, body: blob });
-    const d = await r.json().catch(() => ({ error: 'Upload failed' })); if (!r.ok) throw new Error(d.error || 'Upload failed'); return d;
+    const r = await fetch(`/api/upload?kind=${kind}&name=${encodeURIComponent(name)}`, { method: 'PUT', headers: { 'content-type': blob.type || f.type || 'application/octet-stream', authorization: 'Bearer ' + localStorage.tg }, body: blob });
+    const d = await r.json().catch(() => ({ error: r.status === 413 ? 'File too large' : 'Upload failed — check your connection and try again' })); if (!r.ok) throw new Error(`${f.name}: ${d.error || 'Upload failed'}`); return d;
   }
   let dataUrl;
-  if (isImg) { dataUrl = await shrinkImage(f); if (dataUrl.length > 1.8e6) dataUrl = await shrinkImage(f, 1100, 0.7); }
+  if (isImg) { try { dataUrl = await shrinkImage(f); if (dataUrl.length > 1.8e6) dataUrl = await shrinkImage(f, 1100, 0.7); } catch { throw new Error(`Couldn't read "${f.name}". Please use a JPG or PNG photo (on iPhone: Settings → Camera → Formats → Most Compatible).`); } }
   else { if (f.size > 1.3e6) throw new Error(isVid ? 'Videos must be under 1MB for now — trim it or upload photos instead' : 'File must be under 1MB — take a photo of it instead'); dataUrl = await fileToDataUrl(f); }
   return api('/upload', { method: 'POST', body: { kind, name: f.name.replace(/\.\w+$/, '') + (isImg ? '.jpg' : ''), dataUrl } });
 }

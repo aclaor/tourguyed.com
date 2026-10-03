@@ -72,11 +72,13 @@ const R2_TOTAL_CAP = 9 * 1024 ** 3, MAX_VIDEO = 50 * 1024 ** 2, MAX_IMAGE = 10 *
 async function rawUpload(env, req, url) {
   const u = await me(env, req); if (!u) return err('Please sign in', 401);
   if (!env.FILES) return err('File storage is not enabled');
-  const kind = url.searchParams.get('kind'), type = (req.headers.get('content-type') || '').split(';')[0];
+  const kind = url.searchParams.get('kind'), fname = (url.searchParams.get('name') || '').toLowerCase();
+  let type = (req.headers.get('content-type') || '').split(';')[0];
+  if (!type || type === 'application/octet-stream') type = /\.(mp4|m4v)$/.test(fname) ? 'video/mp4' : /\.mov$/.test(fname) ? 'video/quicktime' : /\.webm$/.test(fname) ? 'video/webm' : /\.(heic|heif)$/.test(fname) ? 'image/heic' : /\.jpe?g$/.test(fname) ? 'image/jpeg' : /\.png$/.test(fname) ? 'image/png' : type;
   if (!['id', 'video', 'photo', 'school', 'profile'].includes(kind)) return err('Bad kind');
   if (!/^(image|video)\//.test(type) && type !== 'application/pdf') return err('Only photos, videos or PDFs are allowed');
-  const len = +req.headers.get('content-length') || 0, cap = type.startsWith('video') ? MAX_VIDEO : MAX_IMAGE;
-  if (!len || len > cap) return err(`File too large — max ${cap / 1024 ** 2}MB for ${type.startsWith('video') ? 'videos' : 'photos'}`);
+  const len = +req.headers.get('content-length') || 0, cap = type.startsWith('video') ? MAX_VIDEO : 25 * 1024 ** 2;
+  if (!len || len > cap) return err(!len ? 'Empty file' : `File too large — max ${cap / 1024 ** 2}MB for ${type.startsWith('video') ? 'videos' : 'photos'}`);
   if (['photo', 'video'].includes(kind)) {
     const c = await env.DB.prepare("SELECT COUNT(*) n FROM media WHERE user_id=? AND kind IN('photo','video')").bind(u.id).first();
     if (c.n >= MAX_MEDIA_PER_USER) return err(`You can upload up to ${MAX_MEDIA_PER_USER} photos/videos`);
@@ -215,6 +217,16 @@ export async function onRequest({ request: req, env, params }) {
     if (route === 'GET /me') {
       const g = u.role === 'guide' ? await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(u.id).first() : null;
       return J({ user: { id: u.id, role: u.role, name: u.name, email: u.email, id_status: u.id_status, relay: relayEmail(u), storage: env.FILES ? 'r2' : 'db' }, guide: g && { ...shapeGuide(g), wise_email: g.wise_email } });
+    }
+    if (route === 'GET /my-media') return J({ items: (await env.DB.prepare("SELECT id,kind,status,created_at FROM media WHERE user_id=? AND kind IN('photo','video') ORDER BY id DESC").bind(u.id).all()).results });
+    if (route === 'GET /my-media/:id') { const m = await env.DB.prepare('SELECT * FROM media WHERE id=? AND user_id=?').bind(id, u.id).first(); return m ? serveFile(env, m, req) : err('Not found', 404); }
+    if (route === 'POST /my-media/:id/delete') {
+      const m = await env.DB.prepare("SELECT * FROM media WHERE id=? AND user_id=? AND kind IN('photo','video')").bind(id, u.id).first(); if (!m) return err('Not found', 404);
+      if (env.FILES) await env.FILES.delete(m.key).catch(() => {});
+      await env.DB.prepare('DELETE FROM media WHERE id=?').bind(id).run();
+      const g = await env.DB.prepare('SELECT media FROM guides WHERE user_id=?').bind(u.id).first();
+      if (g) await env.DB.prepare('UPDATE guides SET media=? WHERE user_id=?').bind(JSON.stringify(arr(g.media).filter(x => x !== `/api/media/${id}`)), u.id).run();
+      return J({ ok: 1 });
     }
     if (route === 'POST /become-guide' && u.role === 'tourist') {
       const active = await env.DB.prepare("SELECT COUNT(*) n FROM bookings WHERE tourist_id=? AND status IN('requested','accepted','in_progress')").bind(u.id).first();
