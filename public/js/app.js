@@ -75,8 +75,8 @@ const views = {
       <div><label>Student</label><select id="student"><option value="">Either</option><option value="yes" ${q.student === 'yes' ? 'selected' : ''}>Students only</option><option value="no" ${q.student === 'no' ? 'selected' : ''}>Non-students</option></select></div>
       <button class="btn" id="f">Filter</button></div>
       <p class="muted" style="margin-bottom:14px">${d.guides.length} guide(s) online · ranked by ratings and acceptance</p>
-      <div class="grid3">${d.guides.map(g => `<div class="card"><img src="${esc(g.photo)}" alt="${esc(g.name)}"><div class="body">
-        <h3>${esc(g.name)} ${g.verified ? '<span class="tag fill" style="font-family:Inter">✓ Verified</span>' : ''}</h3>
+      <div class="grid3">${d.guides.map(g => `<div class="card"><div class="pic"><img src="${esc(g.photo)}" alt="${esc(g.name)}">${g.verified ? `<span class="badge">✓ Verified</span>` : ""}</div><div class="body">
+        <h3>${esc(g.name)}</h3>
         <p class="muted">${g.is_student ? '🎓 ' + esc(g.school) : esc(g.occupation)} · ${esc(g.location)}</p>
         <p class="stars">★ ${g.rating} <span class="muted">(${g.reviews} surveys) · ${g.acceptance}% acceptance</span></p>
         <p>${tags(g.languages)}</p><p style="margin-top:8px"><b>${peso(g.price)}</b> / ${esc(g.package_title)}</p>
@@ -86,12 +86,12 @@ const views = {
   async guide(id) {
     const { guide: g, reviews } = await api('/guides/' + id);
     V().innerHTML = `<p><a href="#/guides">← All guides</a></p><div class="two" style="gap:28px;align-items:start;margin-top:10px">
-      <div><img src="${esc(g.photo)}" style="height:420px;width:100%;border:2px solid var(--ink)">
+      <div><img src="${esc(g.photo)}" style="height:420px;width:100%;border:4px solid #fff;border-radius:22px">
       <div class="grid3" style="margin-top:12px;gap:10px">${g.media.map(m => /\.(mp4|webm)/.test(m) ? `<video src="${esc(m)}" controls style="width:100%"></video>` : `<img src="${esc(m)}" style="height:110px;width:100%">`).join('')}</div></div>
       <div><h1>${esc(g.name)}</h1><p class="muted">${g.is_student ? '🎓 Student · ' + esc(g.school) + ' (campus-limited)' : esc(g.occupation)} · ${esc(g.gender)}</p>
       <p class="stars" style="margin:8px 0">★ ${g.rating} · ${g.reviews} surveys · ${g.acceptance}% acceptance ${g.verified ? '· ✓ ID verified' : ''}</p>
       <p>${esc(g.bio)}</p>
-      <div class="panel" style="margin-top:16px"><h3>${esc(g.package_title)}</h3><p style="font:800 28px Syne">${peso(g.price)} <span class="muted" style="font:14px Inter">/ ${g.duration_hours} hrs</span></p>
+      <div class="panel" style="margin-top:16px"><h3>${esc(g.package_title)}</h3><p style="font:600 28px Lexend;color:var(--mint)">${peso(g.price)} <span class="muted" style="font:14px Inter">/ ${g.duration_hours} hrs</span></p>
       <p><b>Places:</b> ${tags(g.places)}</p><p><b>Expertise:</b> ${tags(g.activities)}</p><p><b>Languages:</b> ${tags(g.languages)}</p>
       <p><b>Transport:</b> ${esc(g.transport)}</p>${g.offers_local ? '<p>✓ Can arrange other local guides</p>' : ''}
       <div class="two" style="gap:12px;margin-top:10px;align-items:start"><div><b>Included</b><ul style="margin-left:18px">${g.includes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
