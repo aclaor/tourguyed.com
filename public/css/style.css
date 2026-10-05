@@ -198,3 +198,9 @@ body[data-mode=tourist] .side{border-right:3px solid #5fbfa8}
 @media(max-width:900px){.potential{grid-template-columns:repeat(2,1fr)}.potential article{height:300px}.potential article:last-child{grid-column:span 2}.impact{grid-template-columns:1fr 1fr}.tech{grid-template-columns:1fr}.gallery{grid-template-columns:1fr 1fr}.gallery img:first-child{grid-row:auto}.gallery img:last-child{grid-column:1/-1}}
 @media(max-width:560px){.potential,.impact{grid-template-columns:1fr}.potential article:last-child{grid-column:auto}}
 .scene{overflow-x:clip}
+/* install app */
+.install-btn{display:inline-flex;align-items:center;gap:6px}
+#ios-hint{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;width:min(92vw,380px);background:#0f2d39;border:2px solid var(--orange);border-radius:18px;padding:16px 18px;color:#fff;box-shadow:0 20px 50px rgba(0,0,0,.5)}
+#ios-hint b{color:var(--orange)}#ios-hint p{margin:6px 0 10px;font-size:14px;color:#d8ecea}
+#ios-hint button{width:100%;background:var(--orange);color:#fff;border:0;border-radius:999px;padding:9px;font:600 14px Poppins;cursor:pointer}
+.side .install-btn{width:100%;justify-content:center;margin-top:14px}

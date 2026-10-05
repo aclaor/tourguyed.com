@@ -11,14 +11,14 @@
 <script type="application/ld+json">{"@context":"https://schema.org","@graph":[
 {"@type":"Organization","@id":"https://tourguyed.com/#org","name":"TourGuyed","url":"https://tourguyed.com/","logo":"https://tourguyed.com/favicon.png","email":"support@tourguyed.com"},
 {"@type":"WebSite","name":"TourGuyed","url":"https://tourguyed.com/","publisher":{"@id":"https://tourguyed.com/#org"}}]}</script>
-<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/favicon.png"><link rel="stylesheet" href="/css/style.css"></head><body>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" href="/favicon.png"><link rel="manifest" href="/site.webmanifest"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="TourGuyed"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><link rel="stylesheet" href="/css/style.css"></head><body>
 
 <div class="scene" style="--photo:url(https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=1600&q=60)">
 <div class="cloud" style="left:-80px;top:380px"></div><div class="cloud" style="right:-60px;bottom:30px"></div>
 <div class="wrap">
 <nav class="nav"><a class="brand" href="/"><span class="logo">T</span><b>TourGuyed</b></a>
 <ul><li><a href="#overview">Overview</a></li><li><a href="#benefits">Benefits</a></li><li><a href="#impact">Impact</a></li><li><a href="#features">Features</a></li><li><a href="#how">How it works</a></li><li><a href="#guides">Guides</a></li><li><a href="#contact">Contact</a></li></ul>
-<a class="btn sm" href="/app.html#/login">Sign in</a></nav>
+<span style="display:flex;gap:8px"><a class="btn ghost sm install-btn" data-install href="#">📲 Install app</a><a class="btn sm" href="/app.html#/login">Sign in</a></span></nav>
 
 <header class="hero"><div class="ticket"><span class="notch t"></span><span class="notch b"></span>
  <div class="left"><span class="chip">TourGuyed · Local Guides</span>
@@ -227,4 +227,4 @@ const money=(n,c)=>{try{return new Intl.NumberFormat(undefined,{style:'currency'
 fetch('/api/guides').then(r=>r.json()).catch(()=>null).then(d=>{
  const g=(d&&d.guides)||[];const el=document.getElementById('featured');
  el.innerHTML=g.slice(0,3).map(x=>`<div class="card"><div class="pic"><img src="${x.photo}" alt="${x.name}">${x.verified?'<span class="badge">✓ Verified</span>':''}</div><div class="body"><h3>${x.name}</h3><p class="muted">${x.is_student?'🎓 '+x.school:x.occupation} · ${x.location}${x.country?', '+x.country:''}</p><p class="stars">★ ${x.rating} <span class="muted">(${x.reviews} surveys)</span></p><p style="margin:8px 0 12px">From <b>${money(x.price,x.currency)}</b></p><a class="btn sm" href="/tourguide/${x.id}">View profile</a></div></div>`).join('')||'<p class="muted">Guides coming soon.</p>';});
-</script></body></html>
+</script><script src="/js/install.js" defer></script></body></html>

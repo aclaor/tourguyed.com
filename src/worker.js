@@ -12,11 +12,11 @@ const page = ({ title, desc, path, img, body, ld }) => `<!doctype html><html lan
 <title>${esc(title)}</title><meta name="description" content="${esc(desc)}"><link rel="canonical" href="${SITE}${path}">
 <meta property="og:type" content="website"><meta property="og:site_name" content="TourGuyed"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}">
 <meta property="og:url" content="${SITE}${path}"><meta property="og:image" content="${esc(img || SITE + '/og.jpg')}"><meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#173e4d">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" href="/favicon.png"><link rel="stylesheet" href="/css/style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" href="/favicon.png"><link rel="manifest" href="/site.webmanifest"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="stylesheet" href="/css/style.css">
 ${ld ? `<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\\u003c')}</script>` : ''}</head><body><div class="wrap">
-<nav class="nav"><a class="brand" href="/"><span class="logo">T</span><b>TourGuyed</b></a><ul><li><a href="/tourguides">Tour guides</a></li><li><a href="/#how">How it works</a></li><li><a href="/app.html#/start?role=guide">Become a guide</a></li></ul><a class="btn sm" href="/app.html#/login">Sign in</a></nav>
+<nav class="nav"><a class="brand" href="/"><span class="logo">T</span><b>TourGuyed</b></a><ul><li><a href="/tourguides">Tour guides</a></li><li><a href="/#how">How it works</a></li><li><a href="/app.html#/start?role=guide">Become a guide</a></li></ul><span style="display:flex;gap:8px"><a class="btn ghost sm install-btn" data-install href="#">📲 Install app</a><a class="btn sm" href="/app.html#/login">Sign in</a></span></nav>
 ${body}
-<footer>© ${new Date().getFullYear()} TourGuyed · <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a> · <a href="/tourguides">All tour guides</a></footer></div></body></html>`;
+<footer>© ${new Date().getFullYear()} TourGuyed · <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a> · <a href="/tourguides">All tour guides</a></footer></div><script src="/js/install.js" defer></script></body></html>`;
 
 async function guidesList(env, city, country) {
   const w = [], b = [];
