@@ -4,7 +4,7 @@
  *  - /api/* (bookings, chat, payments, uploads, video calls): NEVER cached — always live.
  * Bump CACHE_VERSION on deploys that change the shell.
  */
-const CACHE_VERSION = 'tourguyed-v1';
+const CACHE_VERSION = 'tourguyed-v2';
 const SHELL = ['/', '/app.html', '/css/style.css', '/js/app.js', '/site.webmanifest', '/favicon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', e => {

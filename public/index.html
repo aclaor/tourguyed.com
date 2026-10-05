@@ -18,7 +18,7 @@
 <div class="wrap">
 <nav class="nav"><a class="brand" href="/"><span class="logo">T</span><b>TourGuyed</b></a>
 <ul><li><a href="#overview">Overview</a></li><li><a href="#benefits">Benefits</a></li><li><a href="#impact">Impact</a></li><li><a href="#features">Features</a></li><li><a href="#how">How it works</a></li><li><a href="#guides">Guides</a></li><li><a href="#contact">Contact</a></li></ul>
-<span style="display:flex;gap:8px"><a class="btn ghost sm install-btn" data-install href="#">📲 Install app</a><a class="btn sm" href="/app.html#/login">Sign in</a></span></nav>
+<span style="display:flex;gap:8px"><a class="btn ghost sm install-btn" data-install href="#">📲 Install app</a><a class="btn sm" id="signin" href="/app.html#/login">Sign in</a></span></nav>
 
 <header class="hero"><div class="ticket"><span class="notch t"></span><span class="notch b"></span>
  <div class="left"><span class="chip">TourGuyed · Local Guides</span>
@@ -223,6 +223,7 @@
 
 <script>
 document.getElementById('y').textContent=new Date().getFullYear();
+try{if(localStorage.tg){const a=document.getElementById('signin');a.textContent='My dashboard';a.href='/app.html#/dashboard';}}catch(e){}
 const money=(n,c)=>{try{return new Intl.NumberFormat(undefined,{style:'currency',currency:c||'PHP',maximumFractionDigits:0}).format(n)}catch{return (c||'')+' '+n}};
 fetch('/api/guides').then(r=>r.json()).catch(()=>null).then(d=>{
  const g=(d&&d.guides)||[];const el=document.getElementById('featured');

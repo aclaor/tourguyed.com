@@ -3,7 +3,7 @@
   "short_name": "TourGuyed",
   "description": "Book verified local and student tour guides anywhere in the world.",
   "id": "/",
-  "start_url": "/app.html",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
