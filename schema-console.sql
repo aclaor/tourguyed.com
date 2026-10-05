@@ -14,14 +14,14 @@ CREATE TABLE guides(user_id INTEGER PRIMARY KEY, photo TEXT, bio TEXT, gender TE
 CREATE TABLE availability(id INTEGER PRIMARY KEY AUTOINCREMENT, guide_id INTEGER, day TEXT, slot TEXT, UNIQUE(guide_id,day,slot));
 CREATE TABLE bookings(id INTEGER PRIMARY KEY AUTOINCREMENT, tourist_id INTEGER, guide_id INTEGER, day TEXT, slot TEXT,
  timeline TEXT, pay_method TEXT CHECK(pay_method IN('cash','online')), amount REAL, platform_fee REAL,
- status TEXT DEFAULT 'requested', payout_status TEXT DEFAULT 'pending', refund REAL DEFAULT 0, decline_reason TEXT,
+ status TEXT DEFAULT 'requested', payout_status TEXT DEFAULT 'pending', refund REAL DEFAULT 0, decline_reason TEXT, pm_checkout TEXT, pm_payment TEXT, guide_paid REAL DEFAULT 0,
  created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER, sender_id INTEGER, body TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE reviews(booking_id INTEGER PRIMARY KEY, guide_id INTEGER, tourist_id INTEGER, stars INTEGER, comment TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE blocks(tourist_id INTEGER, guide_id INTEGER, PRIMARY KEY(tourist_id,guide_id));
 CREATE TABLE tickets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, subject TEXT, body TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE invites(id INTEGER PRIMARY KEY AUTOINCREMENT, guide_id INTEGER, email TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE media(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, kind TEXT, key TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE media(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, kind TEXT, key TEXT, data TEXT, status TEXT DEFAULT 'pending', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 
 INSERT INTO users(id,role,email,name,pass,id_status) VALUES
 (1,'guide','mia@demo.tourguyed.com','Mia Santos','DEMO','verified'),
@@ -34,5 +34,5 @@ INSERT INTO guides(user_id,photo,bio,gender,occupation,school,is_student,school_
 (3,'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?auto=format&fit=crop&w=700&q=75','Student guide for Cebu heritage, beaches and local eats.','Female','Student','Cebu Normal University',1,1,'Cebu City','["CNU campus","Magellan''s Cross","Fort San Pedro"]','["English","Filipino","Cebuano"]','["Culture","Food","Beaches"]','Walking + taxi','Cebu Heritage Half-Day',1200,4,'["Guide fee","Snacks"]','["Entrance fees","Lunch"]',1,5.0,73,75,1,'[]'),
 (4,'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=700&q=75','Island hopping and hiking guide, offers local boatmen partners.','Male','Boat operator','',0,0,'El Nido, Palawan','["Big Lagoon","Nacpan Beach","Taraw Cliff"]','["English","Filipino","Spanish"]','["Beaches","Hiking","Adventure"]','Boat + van','El Nido Lagoon Day',2500,8,'["Boat","Lunch","Snorkel gear"]','["Environmental fee","Kayak rental"]',1,4.7,54,60,5,'[]');
 
-INSERT INTO availability(guide_id,day,slot) SELECT g.user_id, date('now','+'||d.n||' days'), s.slot FROM guides g, (SELECT 1 n UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9 UNION SELECT 10 UNION SELECT 11 UNION SELECT 12 UNION SELECT 13 UNION SELECT 14) d, (SELECT '09:00' slot UNION SELECT '13:00' UNION SELECT '17:00') s;
-
+INSERT INTO availability(guide_id,day,slot) SELECT g.user_id, date('now','+'||(a.n+b.n+1)||' days'), s.slot FROM guides g, (SELECT 0 n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3) a, (SELECT 0 n UNION ALL SELECT 4 UNION ALL SELECT 8 UNION ALL SELECT 12) b, (SELECT '09:00' slot UNION ALL SELECT '13:00' UNION ALL SELECT '17:00') s;
+CREATE TABLE IF NOT EXISTS resets(token TEXT PRIMARY KEY, user_id INTEGER, expires INTEGER);

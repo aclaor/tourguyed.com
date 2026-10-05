@@ -15,14 +15,14 @@ CREATE TABLE guides(user_id INTEGER PRIMARY KEY, photo TEXT, bio TEXT, gender TE
 CREATE TABLE availability(id INTEGER PRIMARY KEY AUTOINCREMENT, guide_id INTEGER, day TEXT, slot TEXT, UNIQUE(guide_id,day,slot));
 CREATE TABLE bookings(id INTEGER PRIMARY KEY AUTOINCREMENT, tourist_id INTEGER, guide_id INTEGER, day TEXT, slot TEXT,
  timeline TEXT, pay_method TEXT CHECK(pay_method IN('cash','online')), amount REAL, platform_fee REAL,
- status TEXT DEFAULT 'requested', payout_status TEXT DEFAULT 'pending', refund REAL DEFAULT 0, decline_reason TEXT,
+ status TEXT DEFAULT 'requested', payout_status TEXT DEFAULT 'pending', refund REAL DEFAULT 0, decline_reason TEXT, pm_checkout TEXT, pm_payment TEXT, guide_paid REAL DEFAULT 0,
  created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER, sender_id INTEGER, body TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE reviews(booking_id INTEGER PRIMARY KEY, guide_id INTEGER, tourist_id INTEGER, stars INTEGER, comment TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE blocks(tourist_id INTEGER, guide_id INTEGER, PRIMARY KEY(tourist_id,guide_id));
 CREATE TABLE tickets(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, subject TEXT, body TEXT, status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE invites(id INTEGER PRIMARY KEY AUTOINCREMENT, guide_id INTEGER, email TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE media(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, kind TEXT, key TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE media(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, kind TEXT, key TEXT, data TEXT, status TEXT DEFAULT 'pending', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 
 -- Demo guides (password for all demo accounts: demo1234)
 INSERT INTO users(id,role,email,name,pass,id_status) VALUES
@@ -41,3 +41,5 @@ INSERT INTO availability(guide_id,day,slot)
 WITH RECURSIVE d(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM d WHERE n<21)
 SELECT g.user_id, date('now','+'||n||' days'), s.slot FROM d, guides g,
  (SELECT '09:00' slot UNION SELECT '13:00' UNION SELECT '17:00') s;
+CREATE TABLE IF NOT EXISTS resets(token TEXT PRIMARY KEY, user_id INTEGER, expires INTEGER);
+CREATE TABLE IF NOT EXISTS signals(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER, sender_id INTEGER, type TEXT, data TEXT, created INTEGER);

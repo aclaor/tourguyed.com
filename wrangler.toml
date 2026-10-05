@@ -10,8 +10,9 @@ not_found_handling = "404-page"
 [[d1_databases]]
 binding = "DB"
 database_name = "tourguyed-db"
-database_id = "70cbfa62-bcb6-45c3-b518-5e96d6c17514"
+database_id = "PASTE-YOUR-D1-DATABASE-ID-HERE"
 
-[[r2_buckets]]
-binding = "FILES"
-bucket_name = "tourguyed-files"
+# Optional: private storage for IDs/videos
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "tourguyed-files"
