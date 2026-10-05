@@ -1,18 +1,17 @@
-name = "tourguyed"
-main = "src/worker.js"
-compatibility_date = "2026-09-01"
+   name = "tourguyed"
+   main = "src/worker.js"
+   compatibility_date = "2026-09-01"
 
-[assets]
-directory = "./public"
-binding = "ASSETS"
-not_found_handling = "404-page"
+   [assets]
+   directory = "./public"
+   binding = "ASSETS"
+   not_found_handling = "404-page"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "tourguyed-db"
-database_id = "PASTE-YOUR-D1-DATABASE-ID-HERE"
+   [[d1_databases]]
+   binding = "DB"
+   database_name = "tourguyed-db"
+   database_id = "70cbfa62-bcb6-45c3-b518-5e96d6c17514"
 
-# Optional: private storage for IDs/videos
-# [[r2_buckets]]
-# binding = "FILES"
-# bucket_name = "tourguyed-files"
+   [[r2_buckets]]
+   binding = "FILES"
+   bucket_name = "tourguyed-files"
