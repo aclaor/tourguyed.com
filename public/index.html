@@ -1,11 +1,11 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TourGuyed — Book Verified Local & Student Tour Guides in the Philippines</title>
-<meta name="description" content="Find and book verified local and student tour guides in Manila, Cebu, Palawan and across the Philippines. Choose your guide, set your own itinerary, chat before you meet, and pay by cash, GCash or card.">
+<title>TourGuyed — Book Verified Local Tour Guides Anywhere in the World</title>
+<meta name="description" content="Find and book verified local and student tour guides in cities around the world. Choose your guide, set your own itinerary, chat and video call before you meet, and pay safely.">
 <link rel="canonical" href="https://tourguyed.com/">
 <meta name="robots" content="index,follow">
 <meta property="og:type" content="website"><meta property="og:site_name" content="TourGuyed">
 <meta property="og:title" content="TourGuyed — Travel with someone local">
-<meta property="og:description" content="Book verified local and student tour guides across the Philippines. Set your own itinerary, chat first, pay safely.">
+<meta property="og:description" content="Book verified local and student tour guides in cities worldwide. Set your own itinerary, chat first, pay safely.">
 <meta property="og:url" content="https://tourguyed.com/"><meta property="og:image" content="https://tourguyed.com/og.jpg">
 <meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#173e4d">
 <script type="application/ld+json">{"@context":"https://schema.org","@graph":[
@@ -22,7 +22,7 @@
 
 <header class="hero"><div class="ticket"><span class="notch t"></span><span class="notch b"></span>
  <div class="left"><span class="chip">TourGuyed · Local Guides</span>
-  <h1>Travel With<br>Someone Local</h1><p class="tag-line">Transforming the way you explore</p>
+  <h1>Travel With<br>Someone Local</h1><p class="tag-line">Local guides in cities worldwide</p>
   <div style="display:flex;gap:12px;flex-wrap:wrap"><a class="btn" href="/app.html#/start?role=tourist">I'm a tourist</a>
   <a class="btn ghost" style="color:var(--deep);border-color:var(--deep)" href="/app.html#/start?role=guide">I'm a tourguide</a></div></div>
  <div class="right"><h2>One Way<br>Ticket ✈</h2>
@@ -35,7 +35,7 @@
 <div class="wrap">
 <section id="overview" class="sec"><div class="rail"><span>1</span></div>
  <div class="two"><div><h2 class="h2">Company<br>Overview</h2>
-  <p class="lead">TourGuyed is a tourguide marketplace that makes exploring simple. Tourists pick a verified local or student guide, set their own timeline, chat before meeting, and pay in cash or through the site. Guides list the exact places they know and get booked by travelers who want the real thing.</p>
+  <p class="lead">TourGuyed is a worldwide tourguide marketplace that makes exploring simple. Tourists pick a verified local or student guide, set their own timeline, chat before meeting, and pay in cash or through the site. Guides list the exact places they know and get booked by travelers who want the real thing.</p>
   <div class="arrows"><a href="#features">→</a></div></div>
   <div class="strip">
    <div class="photo"><img src="https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?auto=format&fit=crop&w=800&q=75" alt="Heritage town"><span class="check">✓</span></div>
@@ -114,7 +114,8 @@
 
 <script>
 document.getElementById('y').textContent=new Date().getFullYear();
+const money=(n,c)=>{try{return new Intl.NumberFormat(undefined,{style:'currency',currency:c||'PHP',maximumFractionDigits:0}).format(n)}catch{return (c||'')+' '+n}};
 fetch('/api/guides').then(r=>r.json()).catch(()=>null).then(d=>{
  const g=(d&&d.guides)||[];const el=document.getElementById('featured');
- el.innerHTML=g.slice(0,3).map(x=>`<div class="card"><div class="pic"><img src="${x.photo}" alt="${x.name}">${x.verified?'<span class="badge">✓ Verified</span>':''}</div><div class="body"><h3>${x.name}</h3><p class="muted">${x.is_student?'🎓 '+x.school:x.occupation} · ${x.location}</p><p class="stars">★ ${x.rating} <span class="muted">(${x.reviews} surveys)</span></p><p style="margin:8px 0 12px">From <b>₱${Number(x.price).toLocaleString()}</b></p><a class="btn sm" href="/tourguide/${x.id}">View profile</a></div></div>`).join('')||'<p class="muted">Guides coming soon.</p>';});
+ el.innerHTML=g.slice(0,3).map(x=>`<div class="card"><div class="pic"><img src="${x.photo}" alt="${x.name}">${x.verified?'<span class="badge">✓ Verified</span>':''}</div><div class="body"><h3>${x.name}</h3><p class="muted">${x.is_student?'🎓 '+x.school:x.occupation} · ${x.location}${x.country?', '+x.country:''}</p><p class="stars">★ ${x.rating} <span class="muted">(${x.reviews} surveys)</span></p><p style="margin:8px 0 12px">From <b>${money(x.price,x.currency)}</b></p><a class="btn sm" href="/tourguide/${x.id}">View profile</a></div></div>`).join('')||'<p class="muted">Guides coming soon.</p>';});
 </script></body></html>

@@ -1,7 +1,10 @@
 // TourGuyed dashboard SPA (hash routes)
 const $ = s => document.querySelector(s), V = () => $('#view');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const peso = n => '₱' + Number(n || 0).toLocaleString();
+const peso = (n, cur = 'PHP') => { try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur || 'PHP', maximumFractionDigits: 2 }).format(n || 0) } catch { return (cur || '') + ' ' + Number(n || 0).toLocaleString() } };
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'KRW', 'CNY', 'HKD', 'TWD', 'SGD', 'MYR', 'THB', 'IDR', 'VND', 'PHP', 'INR', 'AUD', 'NZD', 'CAD', 'MXN', 'BRL', 'ARS', 'CLP', 'COP', 'PEN', 'ZAR', 'EGP', 'MAD', 'KES', 'NGN', 'AED', 'SAR', 'QAR', 'TRY', 'CHF', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF', 'ILS'];
+const COUNTRIES = (() => { try { const d = new Intl.DisplayNames(['en'], { type: 'region' }); return 'AF AL DZ AD AO AR AM AU AT AZ BS BH BD BB BY BE BZ BJ BT BO BA BW BR BN BG BF KH CM CA CV CL CN CO CR HR CU CY CZ DK DO EC EG SV EE ET FJ FI FR GE DE GH GR GT HN HK HU IS IN ID IR IQ IE IL IT JM JP JO KZ KE KR KW KG LA LV LB LT LU MO MG MY MV MT MU MX MD MC MN ME MA MZ MM NA NP NL NZ NI NG MK NO OM PK PA PG PY PE PH PL PT PR QA RO RU RW SA SN RS SC SG SK SI ZA ES LK SE CH TW TZ TH TL TN TR UG UA AE GB US UY UZ VE VN ZM ZW'.split(' ').map(c => d.of(c)).sort(); } catch { return [] } })();
+const myTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone } catch { return 'UTC' } };
 let ME = null;
 const api = async (path, opt = {}) => {
   const r = await fetch('/api' + path, { method: opt.method || 'GET', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (localStorage.tg || '') }, body: opt.body ? JSON.stringify(opt.body) : undefined });
@@ -47,7 +50,7 @@ const views = {
       V().innerHTML = `<h1>Are you a tourist<br>or a tourguide?</h1>
       <div class="choices" style="margin-bottom:24px"><div class="choice ${role === 'tourist' ? 'on' : ''}" data-r="tourist">I'm a tourist</div><div class="choice ${role === 'guide' ? 'on' : ''}" data-r="guide">I'm a tourguide</div></div>
       <div class="panel" style="max-width:620px">${role === 'tourist' ? `
-        <label>Where are you going?</label><input id="place" placeholder="e.g. Manila, Cebu, El Nido">
+        <label>Where are you going?</label><input id="place" placeholder="City or country — e.g. Kyoto, Lisbon, Bali, Manila">
         <label>What would you like to do?</label><select id="activity"><option value="">Anything</option>${['History', 'Food', 'Walking', 'Nightlife', 'Shopping', 'Culture', 'Beaches', 'Hiking', 'Adventure'].map(x => `<option>${x}</option>`)}</select>
         <label>Male or female tourguide?</label><select id="gender"><option value="">No preference</option><option>Female</option><option>Male</option></select>
         <label>Preferred language</label><input id="language" placeholder="e.g. English">
@@ -92,7 +95,8 @@ const views = {
     const q = qs(); V().innerHTML = '<h1>Tourguides</h1><p class="muted">Loading…</p>';
     const d = await api('/guides?' + new URLSearchParams(q));
     V().innerHTML = `<h1>Tourguides</h1><div class="panel" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end">
-      <div><label>Place</label><input id="place" value="${esc(q.place || '')}"></div><div><label>Activity</label><input id="activity" value="${esc(q.activity || '')}"></div>
+      <div><label>Country</label><select id="country"><option value="">Anywhere</option>${(await api('/countries')).countries.map(c => `<option ${q.country === c.country ? 'selected' : ''}>${esc(c.country)}</option>`).join('')}</select></div>
+      <div><label>City / place</label><input id="place" value="${esc(q.place || '')}"></div><div><label>Activity</label><input id="activity" value="${esc(q.activity || '')}"></div>
       <div><label>Gender</label><select id="gender"><option value="">Any</option>${['Female', 'Male'].map(x => `<option ${q.gender === x ? 'selected' : ''}>${x}</option>`)}</select></div>
       <div><label>Language</label><input id="language" value="${esc(q.language || '')}"></div>
       <div><label>Student</label><select id="student"><option value="">Either</option><option value="yes" ${q.student === 'yes' ? 'selected' : ''}>Students only</option><option value="no" ${q.student === 'no' ? 'selected' : ''}>Non-students</option></select></div>
@@ -100,11 +104,11 @@ const views = {
       <p class="muted" style="margin-bottom:14px">${d.guides.length} guide(s) online · ranked by ratings and acceptance</p>
       <div class="grid3">${d.guides.map(g => `<div class="card"><div class="pic"><img src="${esc(g.photo)}" alt="${esc(g.name)}">${g.verified ? `<span class="badge">✓ Verified</span>` : `<span class="badge" style="background:#5d7f88">Verification pending</span>`}</div><div class="body">
         <h3>${esc(g.name)}</h3>
-        <p class="muted">${g.is_student ? '🎓 ' + esc(g.school) : esc(g.occupation)} · ${esc(g.location)}</p>
+        <p class="muted">${g.is_student ? '🎓 ' + esc(g.school) : esc(g.occupation)} · ${esc(g.location)}${g.country ? ', ' + esc(g.country) : ''}</p>
         <p class="stars">★ ${g.rating} <span class="muted">(${g.reviews} surveys) · ${g.acceptance}% acceptance</span></p>
-        <p>${tags(g.languages)}</p><p style="margin-top:8px"><b>${peso(g.price)}</b> / ${esc(g.package_title)}</p>
+        <p>${tags(g.languages)}</p><p style="margin-top:8px"><b>${peso(g.price, g.currency)}</b> / ${esc(g.package_title)}</p>
         <a class="btn sm" style="margin-top:10px" href="#/guide/${g.id}">View profile</a></div></div>`).join('') || '<p>No guides match. Try fewer filters.</p>'}</div>`;
-    $('#f').onclick = () => { const p = new URLSearchParams(); for (const k of ['place', 'activity', 'gender', 'language', 'student']) if ($('#' + k).value) p.set(k, $('#' + k).value); location.hash = '#/guides?' + p; };
+    $('#f').onclick = () => { const p = new URLSearchParams(); for (const k of ['country', 'place', 'activity', 'gender', 'language', 'student']) if ($('#' + k).value) p.set(k, $('#' + k).value); location.hash = '#/guides?' + p; };
   },
   async guide(id) {
     const { guide: g, reviews } = await api('/guides/' + id);
@@ -114,7 +118,7 @@ const views = {
       <div><h1>${esc(g.name)}</h1><p class="muted">${g.is_student ? '🎓 Student · ' + esc(g.school) + ' (campus-limited)' : esc(g.occupation)} · ${esc(g.gender)}</p>
       <p class="stars" style="margin:8px 0">★ ${g.rating} · ${g.reviews} surveys · ${g.acceptance}% acceptance ${g.verified ? '· ✓ ID verified' : ''}</p>
       <p>${esc(g.bio)}</p>
-      <div class="panel" style="margin-top:16px"><h3>${esc(g.package_title)}</h3><p style="font:600 28px Lexend;color:var(--mint)">${peso(g.price)} <span class="muted" style="font:14px Inter">/ ${g.duration_hours} hrs</span></p>
+      <div class="panel" style="margin-top:16px"><h3>${esc(g.package_title)}</h3><p style="font:600 28px Lexend;color:var(--mint)">${peso(g.price, g.currency)} <span class="muted" style="font:14px Inter">/ ${g.duration_hours} hrs</span></p>
       <p><b>Places:</b> ${tags(g.places)}</p><p><b>Expertise:</b> ${tags(g.activities)}</p><p><b>Languages:</b> ${tags(g.languages)}</p>
       <p><b>Transport:</b> ${esc(g.transport)}</p>${g.offers_local ? '<p>✓ Can arrange other local guides</p>' : ''}
       <div class="two" style="gap:12px;margin-top:10px;align-items:start"><div><b>Included</b><ul style="margin-left:18px">${g.includes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
@@ -134,9 +138,9 @@ const views = {
      ${!isG && ME.user.id_status === 'none' ? '<div class="panel">⚠ Upload your ID before booking. <a href="#/profile">Verify now</a></div>' : ''}
      ${isG && !ME.guide.price ? '<div class="panel">⚠ Finish your profile & set a package price so tourists can find you. <a href="#/profile">Set up profile</a></div>' : ''}${isG && !ME.guide.verified ? '<div class="panel">⏳ Tourists won\'t see you until your ID is verified by TourGuyed. Upload your ID in <a href="#/profile">My profile</a>.</div>' : ''}${isG ? '<div class="panel">📅 Tourists can only book times you open in <a href="#/availability">Availability</a>.</div>' : ''}
      <div class="stats">${isG ? `<div class="stat"><b>${b.filter(x => x.status === 'requested').length}</b>New requests</div><div class="stat"><b>★ ${ME.guide.rating}</b>${ME.guide.reviews} surveys</div>
-       <div class="stat"><b>${ME.guide.acceptance}%</b>Acceptance rate</div><div class="stat"><b>${peso(earned)}</b>Earned (after 20%)</div>`
+       <div class="stat"><b>${ME.guide.acceptance}%</b>Acceptance rate</div><div class="stat"><b>${peso(earned, ME.guide.currency)}</b>Earned (after 20%)</div>`
       : `<div class="stat"><b>${up.length}</b>Upcoming tours</div><div class="stat"><b>${done.length}</b>Completed</div><div class="stat"><b>${ME.user.id_status}</b>ID status</div><div class="stat"><b>${new Set(b.map(x => x.guide_id)).size}</b>Guides used</div>`}</div>
-     ${isG && feeDue ? `<div class="panel">💵 Cash tours: you owe the platform <b>${peso(feeDue)}</b> (20%). Mark each as paid in Bookings.</div>` : ''}
+     ${isG && feeDue ? `<div class="panel">💵 Cash tours: you owe the platform <b>${peso(feeDue, ME.guide.currency)}</b> (20%). Mark each as paid in Bookings.</div>` : ''}
      <h2 style="font-size:28px;margin:10px 0">Upcoming</h2>${bookingTable(up)}`;
     document.querySelectorAll('.switch2').forEach(b => b.onclick = () => switchRole(b.dataset.to));
     wireBookingActions();
@@ -237,16 +241,18 @@ const views = {
       <div id="stu"><label>School ${R}</label><input id="school" value="${esc(g.school)}">
       <label style="font-weight:400"><input type="checkbox" id="school_permission" ${g.school_permission ? 'checked' : ''}> I have permission from my school to give tours ${R}</label>
       <label>School permission document</label><input type="file" id="schf" accept="image/*"></div></div><div>
-      <label>City / area you guide in ${R}</label><input id="location" required value="${esc(g.location)}">
+      <div class="two" style="gap:10px"><div><label>Country ${R}</label><input id="country" list="countries" required value="${esc(g.country || '')}" placeholder="e.g. Japan"><datalist id="countries">${COUNTRIES.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div><label>City / area ${R}</label><input id="location" required value="${esc(g.location)}" placeholder="e.g. Kyoto"></div></div>
       <label>Exact places you can take tourists ${R} <small class="muted">(comma separated)</small></label><input id="places" required value="${esc(L(g.places))}">
       <label>Expertise ${R} <small class="muted">(comma separated)</small></label><input id="activities" required value="${esc(L(g.activities))}">
       <label>Languages you speak & understand ${R}</label><input id="languages" required value="${esc(L(g.languages))}">
       <label>How will you take tourists there? ${R}</label><input id="transport" required value="${esc(g.transport)}">
       <label>Package name ${R}</label><input id="package_title" required value="${esc(g.package_title)}">
-      <div class="two" style="gap:10px"><div><label>Price (₱) ${R}</label><input id="price" type="number" min="1" required value="${g.price || ''}"></div><div><label>Hours ${R}</label><input id="duration_hours" type="number" min="1" required value="${g.duration_hours || ''}"></div></div>
+      <div class="two" style="gap:10px;grid-template-columns:1fr 1fr 1fr"><div><label>Currency ${R}</label><select id="currency" required><option value="">Select…</option>${CURRENCIES.map(c => `<option ${(g.currency || '') === c && g.price ? 'selected' : ''}>${c}</option>`).join('')}</select></div><div><label>Price ${R}</label><input id="price" type="number" min="1" step="0.01" required value="${g.price || ''}"></div><div><label>Hours ${R}</label><input id="duration_hours" type="number" min="1" required value="${g.duration_hours || ''}"></div></div>
       <label>Included ${R} <small class="muted">(comma separated)</small></label><input id="includes" required value="${esc(L(g.includes))}">
       <label>Not included ${R} <small class="muted">(comma separated)</small></label><input id="excludes" required value="${esc(L(g.excludes))}">
       <label style="font-weight:400"><input type="checkbox" id="offers_local" ${g.offers_local ? 'checked' : ''}> I can arrange other local guides</label>
+      <label>Your time zone ${R} <small class="muted">(your availability times use this)</small></label><input id="tz" required value="${esc(g.price ? g.tz : myTz())}">
       <label>Wise account email (for payouts) ${R}</label><input id="wise_email" type="email" required value="${esc(g.wise_email)}"></div></div>
       <button class="btn" style="margin-top:16px" id="save">Save profile</button></div>
       <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically. ${ME.user.storage === 'r2' ? 'Videos up to 50MB, max 30 uploads.' : 'Videos must be under 1MB for now.'}</p><input type="file" id="mf" accept="video/*,image/*,.heic,.mov" multiple><button class="btn sm" style="margin-top:8px;display:none" id="mb">Upload</button><p id="mmsg" class="muted" style="margin-top:6px">Pick one or more files — they upload automatically.</p>
@@ -262,7 +268,7 @@ const views = {
       if (bad.length) { bad[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); return toast(`Please fill in the ${bad.length} required field${bad.length > 1 ? 's' : ''} marked in red`); }
       const v = k => $('#' + k).value, list = k => v(k).split(',').map(x => x.trim()).filter(Boolean);
       const body = { bio: v('bio'), gender: v('gender'), occupation: v('occupation'), school: v('school'), is_student: +v('is_student'), school_permission: $('#school_permission').checked ? 1 : 0,
-        location: v('location'), transport: v('transport'), package_title: v('package_title'), price: +v('price'), duration_hours: +v('duration_hours'), offers_local: $('#offers_local').checked ? 1 : 0, wise_email: v('wise_email'),
+        location: v('location'), country: v('country'), currency: v('currency'), tz: v('tz'), transport: v('transport'), package_title: v('package_title'), price: +v('price'), duration_hours: +v('duration_hours'), offers_local: $('#offers_local').checked ? 1 : 0, wise_email: v('wise_email'),
         places: list('places'), activities: list('activities'), languages: list('languages'), includes: list('includes'), excludes: list('excludes') };
       try { await api('/guide/profile', { method: 'PUT', body }); if ($('#schf').files[0]) await upload('school', $('#schf').files[0]); await loadMe(); toast('Profile saved'); } catch (e) { toast(e.message) }
     };
@@ -287,7 +293,7 @@ const views = {
     if (!need('guide')) return;
     const { slots } = await api('/guides/' + ME.user.id + '/availability'), have = new Set(slots.map(s => s.day + ' ' + s.slot));
     const days = [...Array(28)].map((_, i) => new Date(Date.now() + (i + 1) * 864e5).toISOString().slice(0, 10)), times = ['07:00', '09:00', '11:00', '13:00', '15:00', '17:00', '19:00'];
-    V().innerHTML = `<h1>Availability</h1><p class="muted">Tap the times you're free. Tourists can only book these.</p><div class="panel" style="overflow-x:auto"><table><tr><th>Day</th>${times.map(t => `<th>${t}</th>`).join('')}</tr>
+    V().innerHTML = `<h1>Availability</h1><p class="muted">Tap the times you're free (in your local time: ${esc((ME.guide.tz || myTz()).replace(/_/g, ' '))}). Tourists can only book these.</p><div class="panel" style="overflow-x:auto"><table><tr><th>Day</th>${times.map(t => `<th>${t}</th>`).join('')}</tr>
       ${days.map(d => `<tr><td>${new Date(d).toDateString().slice(0, 10)}</td>${times.map(t => `<td><input type="checkbox" style="width:auto" data-k="${d} ${t}" ${have.has(d + ' ' + t) ? 'checked' : ''}></td>`).join('')}</tr>`).join('')}</table></div>
       <button class="btn" id="sv">Save availability</button>`;
     $('#sv').onclick = async () => {
@@ -310,8 +316,8 @@ const views = {
     if (!need('admin')) return; const o = await api('/admin/overview');
     const S = (n, t, h) => `<a class="stat" href="${h}" style="text-decoration:none"><b>${n}</b>${t}</a>`;
     V().innerHTML = `<h1>Admin overview</h1><div class="stats">${S(o.pending_ids, 'IDs to verify', '#/admin-verify')}${S(o.pending_media, 'Photos/videos to review', '#/admin-verify')}${S(o.open_tickets, 'Open tickets', '#/admin-tickets')}${S(o.bookings, 'Bookings', '#/admin-bookings')}</div>
-      <div class="stats">${S(o.tourists, 'Tourists', '#/admin-users')}${S(o.guides, 'Tourguides', '#/admin-users')}${S(peso(o.fees_earned), 'Platform fees (completed)', '#/admin-bookings')}${S(peso(o.cash_fees_due), 'Cash fees still owed', '#/admin-bookings')}</div>
-      <div class="stats">${S(peso(o.payouts_due), 'To pay guides (Wise)', '#/admin-payouts')}${S((o.storage_used / 1024 ** 3).toFixed(2) + ' GB', o.storage === 'r2' ? 'of 9 GB free storage used (R2)' : 'stored in database (R2 off)', '#/admin-verify')}</div>
+      <div class="stats">${S(o.tourists, 'Tourists', '#/admin-users')}${S(o.guides, 'Tourguides', '#/admin-users')}${S(o.fees_earned, 'Platform fees (completed)', '#/admin-bookings')}${S(o.cash_fees_due, 'Cash fees still owed', '#/admin-bookings')}</div>
+      <div class="stats">${S(o.payouts_due, 'To pay guides (Wise)', '#/admin-payouts')}${S((o.storage_used / 1024 ** 3).toFixed(2) + ' GB', o.storage === 'r2' ? 'of 9 GB free storage used (R2)' : 'stored in database (R2 off)', '#/admin-verify')}</div>
       ${o.online_enabled ? '' : '<div class="panel">⚠ Online payments are off. Add PAYMONGO_SECRET_KEY to the Worker settings to turn them on.</div>'}`;
   },
   async 'admin-verify'() {
@@ -360,13 +366,13 @@ const views = {
     if (!need('admin')) return; const { items } = await api('/admin/payouts');
     V().innerHTML = `<h1>Guide payouts</h1><p class="muted" style="margin-bottom:14px">Online payments land in your PayMongo account. Send each guide their share by Wise, then click "Mark sent".</p>
       ${items.length ? `<table><tr><th>Booking</th><th>Guide</th><th>Wise email</th><th>Stage</th><th>Send now</th><th></th></tr>${items.map(b => `<tr><td>#${b.id}<br><small class="muted">${b.day} ${b.slot}</small></td><td>${esc(b.guide_name)}</td><td>${esc(b.wise_email || '—')}</td>
-      <td>${b.payout_status === 'released' ? 'Tour complete (balance minus 20%)' : 'Met tourist (first 50%)'}</td><td><b>${peso(b.owed)}</b></td><td><button class="btn sm" data-po="${b.id}">Mark sent</button></td></tr>`).join('')}</table>` : '<p class="muted">Nothing to pay out right now.</p>'}`;
+      <td>${b.payout_status === 'released' ? 'Tour complete (balance minus 20%)' : 'Met tourist (first 50%)'}</td><td><b>${peso(b.owed, b.currency)}</b></td><td><button class="btn sm" data-po="${b.id}">Mark sent</button></td></tr>`).join('')}</table>` : '<p class="muted">Nothing to pay out right now.</p>'}`;
     document.querySelectorAll('[data-po]').forEach(b => b.onclick = async () => { if (!confirm('Confirm you sent this amount by Wise?')) return; await api('/admin/payouts/' + b.dataset.po, { method: 'POST' }); toast('Marked as sent'); route(); });
   },
   async 'admin-bookings'() {
     if (!need('admin')) return; const { items } = await api('/admin/bookings');
     V().innerHTML = `<h1>Bookings & fees</h1><table><tr><th>When</th><th>Tourist → Guide</th><th>Amount</th><th>20% fee</th><th>Pay</th><th>Status</th><th></th></tr>${items.map(b => `<tr><td>${b.day} ${b.slot}</td><td>${esc(b.tourist_name)} → ${esc(b.guide_name)}</td>
-      <td>${peso(b.amount)}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${peso(b.platform_fee)}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td><td><span class="status s-${b.status}">${b.status}</span></td>
+      <td>${peso(b.amount, b.currency)}${b.refund ? `<br><small>refund ${peso(b.refund, b.currency)}</small>` : ''}</td><td>${peso(b.platform_fee, b.currency)}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td><td><span class="status s-${b.status}">${b.status}</span></td>
       <td>${b.pay_method === 'cash' && b.status === 'completed' && ['cash_due', 'fee_reported'].includes(b.payout_status) ? `<button class="btn sm" data-fee="${b.id}">Fee received</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7">No bookings yet.</td></tr>'}</table>`;
     document.querySelectorAll('[data-fee]').forEach(b => b.onclick = async () => { await api(`/admin/bookings/${b.dataset.fee}/fee_received`, { method: 'POST' }); toast('Marked as received'); route(); });
   },
@@ -405,9 +411,9 @@ function bookingTable(list) {
   if (!list.length) return '<p class="muted">No bookings yet.</p>';
   return `<table><tr><th>When</th><th>${isG ? 'Tourist' : 'Guide'}</th><th>Amount</th><th>Pay</th><th>Status</th><th>Actions</th></tr>${list.map(b => {
     const a = []; const B = (act, t, ghost) => `<button class="btn sm ${ghost ? 'ghost' : ''}" data-act="${act}" data-id="${b.id}">${t}</button>`;
-    if (isG) { if (b.status === 'requested') a.push(B('accept', 'Accept'), B('decline', 'Decline', 1)); if (b.pay_method === 'cash' && b.status === 'completed' && b.payout_status === 'cash_due') a.push(B('fee_paid', `I paid ${peso(b.platform_fee)} fee`, 1)); }
+    if (isG) { if (b.status === 'requested') a.push(B('accept', 'Accept'), B('decline', 'Decline', 1)); if (b.pay_method === 'cash' && b.status === 'completed' && b.payout_status === 'cash_due') a.push(B('fee_paid', `I paid ${peso(b.platform_fee, b.currency)} fee`, 1)); }
     else {
-      if (b.pay_method === 'online' && b.status === 'accepted' && !b.pm_payment) a.push(B('pay', `Pay ${peso(b.amount)} now`));
+      if (b.pay_method === 'online' && b.status === 'accepted' && !b.pm_payment) a.push(B('pay', `Pay ${peso(b.amount, b.currency)} now`));
       if (b.pay_method === 'online' && b.status === 'requested') a.push('<small class="muted">Pay online after the guide accepts</small>');
       if (['requested', 'accepted'].includes(b.status)) a.push(B('cancel', 'Cancel', 1));
       if (b.status === 'accepted' && b.pay_method === 'online') a.push(B('start', 'Met guide → release 50%'));
@@ -416,8 +422,8 @@ function bookingTable(list) {
       if (b.status === 'completed') a.push(`<a class="btn sm ghost" href="#/guide/${b.guide_id}">Book again</a>`);
     }
     if (['accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`, `<a class="btn sm ghost" href="#/call?b=${b.id}">📹 Video</a>`);
-    return `<tr><td>${b.day} ${b.slot}${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
-      <td>${peso(b.amount)}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td>
+    return `<tr><td>${b.day} ${b.slot}<br><small class="muted">${esc((b.tz || '').split('/').pop().replace(/_/g, ' '))} time</small>${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
+      <td>${peso(b.amount, b.currency)}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee, b.currency)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund, b.currency)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td>
       <td><span class="status s-${b.status}">${b.status.replace('_', ' ')}</span>${b.decline_reason ? `<br><small>${esc(b.decline_reason)}</small>` : ''}</td><td style="display:flex;gap:6px;flex-wrap:wrap">${a.join('')}</td></tr>`;
   }).join('')}</table>`;
 }
@@ -440,13 +446,13 @@ async function submitRate(id) { try { await api('/reviews', { method: 'POST', bo
 async function bookFlow(g) {
   if (!ME) return location.hash = '#/signup';
   if (ME.user.role !== 'tourist') return toast('Sign in as a tourist to book');
-  const { slots } = await api(`/guides/${g.id}/availability`); const byDay = {}; slots.forEach(s => (byDay[s.day] ||= []).push(s.slot));
+  const { slots, tz: gtz } = await api(`/guides/${g.id}/availability`); const byDay = {}; slots.forEach(s => (byDay[s.day] ||= []).push(s.slot));
   const days = Object.keys(byDay); let day = days[0], slot = null;
   const draw = () => modal(`<h3>Set appointment with ${esc(g.name)}</h3><label>Available dates</label><div class="cal">${days.map(d => `<button data-d="${d}" class="${d === day ? 'on' : ''}">${new Date(d).toDateString().slice(4, 10)}</button>`).join('') || '<p>No open dates.</p>'}</div>
-    <label>Time</label><div class="cal">${(byDay[day] || []).map(t => `<button data-t="${t}" class="${t === slot ? 'on' : ''}">${t}</button>`).join('')}</div>
+    <label>Time <small class="muted">(local time in ${esc((gtz || '').replace(/_/g, ' '))}${gtz !== myTz() ? ' — not your time zone' : ''})</small></label><div class="cal">${(byDay[day] || []).map(t => `<button data-t="${t}" class="${t === slot ? 'on' : ''}">${t}</button>`).join('')}</div>
     <label>Your tour timeline</label><textarea id="tl" rows="3" placeholder="e.g. 9:00 meet at Fort Santiago → 11:00 Binondo lunch → 13:00 end"></textarea>
-    <label>Payment</label><select id="pm"><option value="cash">Cash to guide</option><option value="online">Pay online — GCash, Maya, card, GrabPay (held safely)</option></select>
-    <p class="muted" style="font-size:13px;margin-top:10px">${peso(g.price)} · Free cancellation until 30 min before. Later cancellation refunds half. Guide 30+ min late or no-show = full refund. No refund after you release payment.</p>
+    <label>Payment</label><select id="pm"><option value="cash">Cash to guide (${esc(g.currency || 'local currency')})</option>${(g.currency || 'PHP') === 'PHP' ? '<option value="online">Pay online — card, GCash, Maya, GrabPay (held safely)</option>' : ''}</select>
+    <p class="muted" style="font-size:13px;margin-top:10px">${peso(g.price, g.currency)} · Free cancellation until 30 min before. Later cancellation refunds half. Guide 30+ min late or no-show = full refund. No refund after you release payment.</p>
     <button class="btn" style="margin-top:12px" id="cf">Confirm request</button>`);
   const wire = () => {
     document.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { day = b.dataset.d; slot = null; draw(); wire(); });

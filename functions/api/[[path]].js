@@ -116,7 +116,18 @@ async function serveFile(env, m, req) {
   }
   return new Response('File not stored', { status: 404 });
 }
-const minsUntil = b => (new Date(`${b.day}T${b.slot}:00+08:00`) - Date.now()) / 60000;
+const money = (n, cur = 'PHP') => { try { return new Intl.NumberFormat('en', { style: 'currency', currency: cur, maximumFractionDigits: 2 }).format(n || 0) } catch { return `${cur} ${(+n || 0).toFixed(2)}` } };
+// UTC time of a local date+time in a given IANA time zone
+function zonedToUtc(day, slot, tz = 'Asia/Manila') {
+  const guess = Date.UTC(...day.split('-').map((v, i) => i === 1 ? v - 1 : +v), ...slot.split(':').map(Number));
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(guess)).map(x => [x.type, x.value]));
+    const asLocal = Date.UTC(+parts.year, parts.month - 1, +parts.day, +parts.hour, +parts.minute);
+    return guess - (asLocal - guess);
+  } catch { return guess - 8 * 3600e3; }
+}
+const minsUntil = b => (zonedToUtc(b.day, b.slot, b.tz) - Date.now()) / 60000;
+const validTz = tz => { try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true } catch { return false } };
 
 let migrated = false;
 async function migrate(env) {
@@ -124,6 +135,8 @@ async function migrate(env) {
   const stmts = ["ALTER TABLE media ADD COLUMN data TEXT", "ALTER TABLE media ADD COLUMN status TEXT DEFAULT 'pending'",
     "ALTER TABLE bookings ADD COLUMN pm_checkout TEXT", "ALTER TABLE bookings ADD COLUMN pm_payment TEXT", "ALTER TABLE bookings ADD COLUMN guide_paid REAL DEFAULT 0",
     "CREATE TABLE IF NOT EXISTS resets(token TEXT PRIMARY KEY, user_id INTEGER, expires INTEGER)", "ALTER TABLE media ADD COLUMN size INTEGER DEFAULT 0",
+    "ALTER TABLE guides ADD COLUMN country TEXT", "ALTER TABLE guides ADD COLUMN currency TEXT DEFAULT 'PHP'", "ALTER TABLE guides ADD COLUMN tz TEXT DEFAULT 'Asia/Manila'",
+    "ALTER TABLE bookings ADD COLUMN currency TEXT DEFAULT 'PHP'", "ALTER TABLE bookings ADD COLUMN tz TEXT DEFAULT 'Asia/Manila'",
     "CREATE TABLE IF NOT EXISTS signals(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER, sender_id INTEGER, type TEXT, data TEXT, created INTEGER)"];
   for (const q of stmts) await env.DB.prepare(q).run().catch(() => {}); // ignore 'duplicate column'
 }
@@ -180,7 +193,8 @@ export async function onRequest({ request: req, env, params }) {
     }
     if (route === 'GET /guides') {
       const q = url.searchParams; const where = ['g.verified=1', 'g.price>0']; const b = [];
-      if (q.get('place')) { where.push('(g.location LIKE ? OR g.places LIKE ?)'); b.push(`%${q.get('place')}%`, `%${q.get('place')}%`); }
+      if (q.get('place')) { where.push('(g.location LIKE ? OR g.places LIKE ? OR g.country LIKE ?)'); b.push(...Array(3).fill(`%${q.get('place')}%`)); }
+      if (q.get('country')) { where.push('g.country=?'); b.push(q.get('country')); }
       if (q.get('activity')) { where.push('g.activities LIKE ?'); b.push(`%${q.get('activity')}%`); }
       if (q.get('gender')) { where.push('g.gender=?'); b.push(q.get('gender')); }
       if (q.get('language')) { where.push('g.languages LIKE ?'); b.push(`%${q.get('language')}%`); }
@@ -191,6 +205,7 @@ export async function onRequest({ request: req, env, params }) {
         ORDER BY g.verified DESC, (g.rating*20 + MIN(g.reviews,200)*0.1 + (CASE WHEN g.accepted+g.declined=0 THEN 100 ELSE g.accepted*100.0/(g.accepted+g.declined) END)*0.3) DESC`).bind(...b).all();
       return J({ guides: rows.results.map(shapeGuide) });
     }
+    if (route === 'GET /countries') return J({ countries: (await env.DB.prepare("SELECT country, COUNT(*) n FROM guides WHERE verified=1 AND price>0 AND country IS NOT NULL AND country!='' GROUP BY country ORDER BY n DESC").all()).results });
     if (route === 'GET /guides/:id') {
       const g = await env.DB.prepare('SELECT g.*,u.name FROM guides g JOIN users u ON u.id=g.user_id WHERE g.user_id=?').bind(id).first();
       if (!g) return err('Not found', 404);
@@ -202,7 +217,8 @@ export async function onRequest({ request: req, env, params }) {
       const a = await env.DB.prepare(`SELECT day,slot FROM availability WHERE guide_id=? AND day>=? AND NOT EXISTS
         (SELECT 1 FROM bookings b WHERE b.guide_id=availability.guide_id AND b.day=availability.day AND b.slot=availability.slot AND b.status IN('requested','accepted'))
         ORDER BY day,slot`).bind(id, today).all();
-      return J({ slots: a.results });
+      const gtz = await env.DB.prepare('SELECT tz FROM guides WHERE user_id=?').bind(id).first();
+      return J({ slots: a.results, tz: gtz?.tz || 'Asia/Manila' });
     }
 
     if (route === 'GET /media/:id') {
@@ -239,7 +255,7 @@ export async function onRequest({ request: req, env, params }) {
     if (route === 'POST /logout') { await env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(u.id).run(); return J({ ok: 1 }); }
 
     if (route === 'PUT /guide/profile' && u.role === 'guide') {
-      const f = ['photo', 'bio', 'gender', 'occupation', 'school', 'location', 'transport', 'package_title', 'wise_email'];
+      const f = ['photo', 'bio', 'gender', 'occupation', 'school', 'location', 'country', 'currency', 'tz', 'transport', 'package_title', 'wise_email'];
       const n = ['is_student', 'school_permission', 'price', 'duration_hours', 'offers_local'];
       const a = ['places', 'languages', 'activities', 'includes', 'excludes'];
       const sets = [], vals = [];
@@ -247,7 +263,9 @@ export async function onRequest({ request: req, env, params }) {
       for (const k of n) if (k in body) { sets.push(`${k}=?`); vals.push(+body[k] || 0); }
       for (const k of a) if (k in body) { sets.push(`${k}=?`); vals.push(JSON.stringify(body[k] || [])); }
       if (body.is_student && !body.school_permission) return err('Student guides must confirm school permission');
-      const need = { bio: 'Short bio', gender: 'Gender', occupation: 'Occupation', location: 'City / area', transport: 'Transport', package_title: 'Package name', wise_email: 'Wise email' };
+      if (body.currency && !/^[A-Z]{3}$/.test(body.currency)) return err('Pick a valid currency');
+      if (body.tz && !validTz(body.tz)) return err('Invalid time zone');
+      const need = { country: 'Country', currency: 'Currency', bio: 'Short bio', gender: 'Gender', occupation: 'Occupation', location: 'City / area', transport: 'Transport', package_title: 'Package name', wise_email: 'Wise email' };
       for (const [k, label] of Object.entries(need)) if (!String(body[k] || '').trim()) return err(label + ' is required');
       for (const [k, label] of Object.entries({ places: 'Places', activities: 'Expertise', languages: 'Languages', includes: 'Included', excludes: 'Not included' })) if (!(body[k] || []).length) return err(label + ' is required');
       if (!(+body.price > 0)) return err('Price is required'); if (!(+body.duration_hours > 0)) return err('Hours is required');
@@ -290,8 +308,9 @@ export async function onRequest({ request: req, env, params }) {
       if (!slot) return err('That time is not available');
       const pm = body.pay_method === 'online' ? 'online' : 'cash';
       if (pm === 'online' && !env.PAYMONGO_SECRET_KEY) return err('Online payment is not available yet. Please choose cash.');
-      const r = await env.DB.prepare('INSERT INTO bookings(tourist_id,guide_id,day,slot,timeline,pay_method,amount,platform_fee,payout_status) VALUES(?,?,?,?,?,?,?,?,?)')
-        .bind(u.id, g.user_id, body.day, body.slot, body.timeline || '', pm, g.price, +(g.price * FEE).toFixed(2), pm === 'cash' ? 'cash_due' : 'unpaid').run();
+      if (pm === 'online' && (g.currency || 'PHP') !== 'PHP') return err('Online payment is not available for this guide yet. Please choose cash.');
+      const r = await env.DB.prepare('INSERT INTO bookings(tourist_id,guide_id,day,slot,timeline,pay_method,amount,platform_fee,payout_status,currency,tz) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(u.id, g.user_id, body.day, body.slot, body.timeline || '', pm, g.price, +(g.price * FEE).toFixed(2), pm === 'cash' ? 'cash_due' : 'unpaid', g.currency || 'PHP', g.tz || 'Asia/Manila').run();
       await notify(env, g.user_id, 'New TourGuyed booking request', `You have a new request for ${body.day} ${body.slot}. Open your dashboard to accept or decline.`);
       return J({ id: r.meta.last_row_id });
     }
@@ -346,7 +365,7 @@ export async function onRequest({ request: req, env, params }) {
       } else if (action === 'release' && !isG && ['accepted', 'in_progress'].includes(b.status)) {
         // tourist confirms tour complete → full payout; refund no longer possible
         await env.DB.prepare(`UPDATE bookings SET status='completed', payout_status=? WHERE id=?`).bind(b.pay_method === 'cash' ? 'cash_due' : 'released', id).run();
-        if (b.pay_method === 'cash') await notify(env, b.guide_id, 'Tour completed — platform fee due', `Please pay the 20% platform fee (₱${b.platform_fee}) for booking #${b.id}.`);
+        if (b.pay_method === 'cash') await notify(env, b.guide_id, 'Tour completed — platform fee due', `Please pay the 20% platform fee (${money(b.platform_fee, b.currency)}) for booking #${b.id}.`);
       } else if (action === 'fee_paid' && isG && b.pay_method === 'cash') {
         await env.DB.prepare("UPDATE bookings SET payout_status='fee_reported' WHERE id=?").bind(id).run();
       } else return err('Action not allowed in this state');
@@ -413,13 +432,14 @@ export async function onRequest({ request: req, env, params }) {
       const all = async (sql, ...b) => (await env.DB.prepare(sql).bind(...b).all()).results;
       if (route === 'GET /admin/overview') {
         const one = async q => (await env.DB.prepare(q).first()).n;
+        const byCur = async q => (await env.DB.prepare(q).all()).results.filter(r => r.n > 0).map(r => money(r.n, r.c || 'PHP')).join(' + ') || money(0, 'USD');
         return J({
           users: await one("SELECT COUNT(*) n FROM users WHERE role!='admin'"), guides: await one("SELECT COUNT(*) n FROM users WHERE role='guide'"),
           tourists: await one("SELECT COUNT(*) n FROM users WHERE role='tourist'"), pending_ids: await one("SELECT COUNT(*) n FROM media WHERE kind IN('id','school') AND status='pending'"),
           pending_media: await one("SELECT COUNT(*) n FROM media WHERE kind IN('photo','video') AND status='pending'"), open_tickets: await one("SELECT COUNT(*) n FROM tickets WHERE status='open'"),
-          bookings: await one("SELECT COUNT(*) n FROM bookings"), fees_earned: await one("SELECT COALESCE(SUM(platform_fee),0) n FROM bookings WHERE status='completed'"),
-          cash_fees_due: await one("SELECT COALESCE(SUM(platform_fee),0) n FROM bookings WHERE status='completed' AND payout_status='cash_due'"),
-          payouts_due: await one("SELECT COALESCE(SUM(CASE WHEN payout_status='released' THEN amount-platform_fee ELSE amount/2 END - guide_paid),0) n FROM bookings WHERE pay_method='online' AND payout_status IN('partial_released','released')"),
+          bookings: await one("SELECT COUNT(*) n FROM bookings"), fees_earned: await byCur("SELECT currency c, SUM(platform_fee) n FROM bookings WHERE status='completed' GROUP BY currency"),
+          cash_fees_due: await byCur("SELECT currency c, SUM(platform_fee) n FROM bookings WHERE status='completed' AND payout_status='cash_due' GROUP BY currency"),
+          payouts_due: await byCur("SELECT currency c, SUM(CASE WHEN payout_status='released' THEN amount-platform_fee ELSE amount/2 END - guide_paid) n FROM bookings WHERE pay_method='online' AND payout_status IN('partial_released','released') GROUP BY currency"),
           online_enabled: env.PAYMONGO_SECRET_KEY ? 1 : 0, storage: env.FILES ? 'r2' : 'db', storage_used: await one('SELECT COALESCE(SUM(size),0) n FROM media')
         });
       }
@@ -456,14 +476,14 @@ export async function onRequest({ request: req, env, params }) {
       if (route === 'GET /admin/bookings') return J({ items: await all(`SELECT b.*,gu.name guide_name,tu.name tourist_name FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id ORDER BY b.id DESC LIMIT 300`) });
       if (route === 'POST /admin/media/:id/delete') { const m = await env.DB.prepare('SELECT key FROM media WHERE id=?').bind(id).first(); if (m && env.FILES) await env.FILES.delete(m.key).catch(() => {}); await env.DB.prepare('DELETE FROM media WHERE id=?').bind(id).run(); return J({ ok: 1 }); }
       if (route === 'POST /admin/users/:id/reset') return J({ link: await resetLink(env, id, url.origin) });
-      if (route === 'GET /admin/payouts') return J({ items: (await all(`SELECT b.id,b.day,b.slot,b.amount,b.platform_fee,b.payout_status,b.guide_paid,b.status,u.name guide_name,g.wise_email
+      if (route === 'GET /admin/payouts') return J({ items: (await all(`SELECT b.id,b.day,b.slot,b.amount,b.platform_fee,b.payout_status,b.guide_paid,b.status,b.currency,u.name guide_name,g.wise_email
           FROM bookings b JOIN users u ON u.id=b.guide_id JOIN guides g ON g.user_id=b.guide_id WHERE b.pay_method='online' AND b.payout_status IN('partial_released','released') ORDER BY b.id DESC`))
           .map(b => ({ ...b, owed: +((b.payout_status === 'released' ? b.amount - b.platform_fee : b.amount / 2) - b.guide_paid).toFixed(2) })).filter(b => b.owed > 0) });
       if (route === 'POST /admin/payouts/:id') {
         const b = await env.DB.prepare('SELECT * FROM bookings WHERE id=?').bind(id).first(); if (!b) return err('Not found', 404);
         const owed = (b.payout_status === 'released' ? b.amount - b.platform_fee : b.amount / 2) - b.guide_paid;
         await env.DB.prepare('UPDATE bookings SET guide_paid=guide_paid+? WHERE id=?').bind(owed, id).run();
-        await notify(env, b.guide_id, 'TourGuyed payout sent', `₱${owed.toFixed(2)} for booking #${b.id} was sent to your Wise account.`);
+        await notify(env, b.guide_id, 'TourGuyed payout sent', `${money(owed, b.currency)} for booking #${b.id} was sent to your Wise account.`);
         return J({ ok: 1 });
       }
       if (route === 'POST /admin/bookings/:id/fee_received') { await env.DB.prepare("UPDATE bookings SET payout_status='fee_received' WHERE id=?").bind(id).run(); return J({ ok: 1 }); }
