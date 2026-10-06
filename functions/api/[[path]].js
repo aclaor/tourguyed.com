@@ -12,6 +12,7 @@ async function hash(pw, salt) {
 }
 async function verify(pw, stored) {
   if (stored === 'DEMO') return pw === 'demo1234';
+  if (stored === 'OAUTH') return false; // social-login account: use Google/Facebook, or set a password via 'Forgot password'
   return (await hash(pw, stored.split(':')[0])) === stored;
 }
 const relayEmail = u => `${u.role}-${u.id}@relay.tourguyed.com`; // masked "sudo" email
@@ -129,6 +130,8 @@ function zonedToUtc(day, slot, tz = 'Asia/Manila') {
 const minsUntil = b => (zonedToUtc(b.day, b.slot, b.tz) - Date.now()) / 60000;
 const validTz = tz => { try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true } catch { return false } };
 
+// public (publishable) anon key of the shared Supabase auth project — safe to ship
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdreHB3cXJ5YWtnemd2dnByYmtsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0MDAxNTUsImV4cCI6MjA5Mzk3NjE1NX0.oMSZx15YsodlOdzPxg4d7a0WesYQRuPCRUZxZcqGA1I';
 let migrated = false;
 async function migrate(env) {
   if (migrated) return; migrated = true;
@@ -173,8 +176,27 @@ export async function onRequest({ request: req, env, params }) {
       if (role === 'guide') await env.DB.prepare('INSERT INTO guides(user_id,invited_by) VALUES(?,?)').bind(uid, body.invited_by || null).run();
       return J({ token: await session(env, uid) });
     }
+    if (route === 'POST /oauth') {
+      // Google / Facebook sign-in via the shared Leeys Technology Supabase project.
+      const SB = env.SUPABASE_URL || 'https://gkxpwqryakgzgvvprbkl.supabase.co', KEY = env.SUPABASE_ANON || SUPA_ANON;
+      const r = await fetch(`${SB}/auth/v1/user`, { headers: { apikey: KEY, authorization: `Bearer ${body.access_token || ''}` } });
+      if (!r.ok) return err('Sign-in expired. Please try again.', 401);
+      const su = await r.json(), email = (su.email || '').toLowerCase();
+      if (!email) return err('Your account did not share an email address. Please use email sign-up instead.');
+      let u = await env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email).first(), isNew = false;
+      if (!u) {
+        const role = body.role === 'guide' ? 'guide' : 'tourist', md = su.user_metadata || {};
+        const name = (md.full_name || md.name || email.split('@')[0]).slice(0, 80);
+        const ins = await env.DB.prepare('INSERT INTO users(role,email,name,pass) VALUES(?,?,?,?)').bind(role, email, name, 'OAUTH').run();
+        u = { id: ins.meta.last_row_id, role };
+        if (role === 'guide') await env.DB.prepare('INSERT OR IGNORE INTO guides(user_id,photo) VALUES(?,?)').bind(u.id, md.avatar_url || md.picture || null).run();
+        isNew = true;
+      }
+      return J({ token: await session(env, u.id), isNew, role: u.role });
+    }
     if (route === 'POST /login') {
       const u = await env.DB.prepare('SELECT * FROM users WHERE email=?').bind((body.email || '').toLowerCase()).first();
+      if (u && u.pass === 'OAUTH') return err('This account uses Google sign-in. Tap "Continue with Google" (or use Forgot password to set one).', 401);
       if (!u || !(await verify(body.password || '', u.pass))) return err('Wrong email or password', 401);
       return J({ token: await session(env, u.id) });
     }

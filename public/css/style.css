@@ -204,3 +204,9 @@ body[data-mode=tourist] .side{border-right:3px solid #5fbfa8}
 #ios-hint b{color:var(--orange)}#ios-hint p{margin:6px 0 10px;font-size:14px;color:#d8ecea}
 #ios-hint button{width:100%;background:var(--orange);color:#fff;border:0;border-radius:999px;padding:9px;font:600 14px Poppins;cursor:pointer}
 .side .install-btn{width:100%;justify-content:center;margin-top:14px}
+/* social sign-in */
+.social{display:grid;gap:10px;margin-bottom:6px}
+.sbtn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px;border-radius:999px;font:600 15px Poppins;cursor:pointer;border:1px solid var(--line);transition:.2s}
+.sbtn.google{background:#fff;color:#1f1f1f}.sbtn.facebook{background:#1877f2;color:#fff;border-color:#1877f2}
+.sbtn:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(0,0,0,.25)}.sbtn:disabled{opacity:.7}
+.or{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:13px;margin:14px 0 4px}.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}

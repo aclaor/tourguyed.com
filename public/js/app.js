@@ -6,6 +6,32 @@ const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'KRW', 'CNY', 'HKD', 'TWD', 'SGD
 const COUNTRIES = (() => { try { const d = new Intl.DisplayNames(['en'], { type: 'region' }); return 'AF AL DZ AD AO AR AM AU AT AZ BS BH BD BB BY BE BZ BJ BT BO BA BW BR BN BG BF KH CM CA CV CL CN CO CR HR CU CY CZ DK DO EC EG SV EE ET FJ FI FR GE DE GH GR GT HN HK HU IS IN ID IR IQ IE IL IT JM JP JO KZ KE KR KW KG LA LV LB LT LU MO MG MY MV MT MU MX MD MC MN ME MA MZ MM NA NP NL NZ NI NG MK NO OM PK PA PG PY PE PH PL PT PR QA RO RU RW SA SN RS SC SG SK SI ZA ES LK SE CH TW TZ TH TL TN TR UG UA AE GB US UY UZ VE VN ZM ZW'.split(' ').map(c => d.of(c)).sort(); } catch { return [] } })();
 const myTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone } catch { return 'UTC' } };
 let ME = null;
+// ---------- social sign-in (shared Leeys Technology Supabase project) ----------
+const SOCIAL = ['google']; // add 'facebook' here once Facebook is enabled in Supabase → Authentication → Providers
+const SUPA_URL = 'https://gkxpwqryakgzgvvprbkl.supabase.co', SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdreHB3cXJ5YWtnemd2dnByYmtsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0MDAxNTUsImV4cCI6MjA5Mzk3NjE1NX0.oMSZx15YsodlOdzPxg4d7a0WesYQRuPCRUZxZcqGA1I';
+let supa = null; try { supa = window.supabase.createClient(SUPA_URL, SUPA_ANON, { auth: { persistSession: true, detectSessionInUrl: true, flowType: 'pkce' } }); } catch { }
+const SOCIAL_UI = { google: ['Continue with Google', '<svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>'],
+  facebook: ['Continue with Facebook', '<svg width="18" height="18" viewBox="0 0 24 24"><path fill="#fff" d="M24 12a12 12 0 1 0-13.9 11.9v-8.4H7.1V12h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-2 .9-2 1.9V12h3.4l-.5 3.5h-2.9v8.4A12 12 0 0 0 24 12z"/></svg>'] };
+const socialButtons = (note = '') => supa ? `<div class="social">${SOCIAL.map(p => `<button type="button" class="sbtn ${p}" data-social="${p}">${SOCIAL_UI[p][1]}<span>${SOCIAL_UI[p][0]}</span></button>`).join('')}</div>${note}<div class="or"><span>or use email</span></div>` : '';
+function wireSocial(getRole) {
+  document.querySelectorAll('[data-social]').forEach(b => b.onclick = async () => {
+    try { localStorage.tg_role = getRole ? getRole() : 'tourist'; } catch { }
+    b.disabled = true; b.querySelector('span').textContent = 'Opening…';
+    const { error } = await supa.auth.signInWithOAuth({ provider: b.dataset.social, options: { redirectTo: location.origin + '/app.html' } });
+    if (error) { toast('Sign-in failed: ' + error.message); b.disabled = false; b.querySelector('span').textContent = SOCIAL_UI[b.dataset.social][0]; }
+  });
+}
+async function finishSocial() {
+  if (!supa || localStorage.tg) return false;
+  const { data } = await supa.auth.getSession().catch(() => ({ data: {} }));
+  const at = data?.session?.access_token; if (!at) return false;
+  try {
+    const d = await api('/oauth', { method: 'POST', body: { access_token: at, role: localStorage.tg_role } });
+    localStorage.tg = d.token; localStorage.removeItem('tg_role'); await supa.auth.signOut().catch(() => { });
+    await loadMe(); toast(d.isNew ? '🎉 Welcome to TourGuyed!' : 'Signed in'); 
+    location.hash = d.isNew && d.role === 'guide' ? '#/profile' : '#/dashboard'; return true;
+  } catch (e) { toast(e.message); await supa.auth.signOut().catch(() => { }); return false; }
+}
 const api = async (path, opt = {}) => {
   const r = await fetch('/api' + path, { method: opt.method || 'GET', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (localStorage.tg || '') }, body: opt.body ? JSON.stringify(opt.body) : undefined });
   const d = await r.json().catch(() => ({ error: 'Network error' }));
@@ -64,17 +90,20 @@ const views = {
     }; draw();
   },
   login() {
-    V().innerHTML = `<h1>Sign in</h1><div class="panel" style="max-width:420px"><label>Email</label><input id="e" type="email"><label>Password</label><input id="p" type="password">
+    V().innerHTML = `<h1>Sign in</h1><div class="panel" style="max-width:420px">${socialButtons()}<label>Email</label><input id="e" type="email"><label>Password</label><input id="p" type="password">
     <button class="btn" style="margin-top:16px" id="b">Sign in</button><p style="margin-top:12px">New here? <a href="#/signup">Create an account</a> · <a href="#/forgot">Forgot password?</a></p>
-    <p class="muted" style="font-size:13px;margin-top:10px">Demo guide: mia@demo.tourguyed.com / demo1234</p></div>`;
+    </div>`;
+    wireSocial();
     $('#b').onclick = async () => { try { const d = await api('/login', { method: 'POST', body: { email: $('#e').value, password: $('#p').value } }); localStorage.tg = d.token; await loadMe(); location.hash = ME.user.role === 'admin' ? '#/admin' : '#/dashboard'; } catch (e) { toast(e.message) } };
   },
   signup() {
     const q = qs();
     V().innerHTML = `<h1>Sign up</h1><div class="panel" style="max-width:460px"><label>I am a</label><select id="r"><option value="tourist">Tourist</option><option value="guide" ${q.role === 'guide' ? 'selected' : ''}>Tourguide</option></select>
+    <div style="margin-top:14px">${socialButtons('<p class="muted" style="font-size:12px;text-align:center;margin-top:8px">By continuing you accept the <a href="/terms.html" target="_blank">Terms</a> and <a href="/privacy.html" target="_blank">Privacy Policy</a>.</p>')}</div>
     <label>Full name <span class="req">*</span></label><input id="n" required><label>Email <span class="req">*</span></label><input id="e" type="email" required><label>Password (8+ characters) <span class="req">*</span></label><input id="p" type="password" required>
     <label style="font-weight:400"><input type="checkbox" id="t" style="width:auto"> I agree to be respectful and professional and accept the TourGuyed <a href="/terms.html" target="_blank">Terms</a> (cancellation, refund and 20% platform fee rules) and <a href="/privacy.html" target="_blank">Privacy Policy</a>.</label>
     <button class="btn" style="margin-top:16px" id="b">Create account</button></div>`;
+    wireSocial(() => $('#r').value);
     $('#b').onclick = async () => {
       const miss = ['n', 'e', 'p'].filter(k => !$('#' + k).value.trim()); document.querySelectorAll('.invalid').forEach(el => el.classList.remove('invalid')); miss.forEach(k => $('#' + k).classList.add('invalid'));
       if (miss.length) return toast('Please fill in the fields marked in red');
@@ -470,4 +499,10 @@ async function route() {
   try { await (views[name] || views.start)(arg); } catch (e) { V().innerHTML = `<h1>Oops</h1><p>${esc(e.message)}</p>`; }
 }
 window.addEventListener('hashchange', route);
-loadMe().then(() => { if (!location.hash) location.hash = ME ? (ME.user.role === 'admin' ? '#/admin' : '#/dashboard') : '#/start'; else route(); });
+(async () => {
+  const social = await finishSocial();
+  if (location.search.includes('code=')) history.replaceState(null, '', location.pathname + location.hash);
+  if (!social) await loadMe();
+  if (!location.hash || location.hash.startsWith('#access_token')) location.hash = ME ? (ME.user.role === 'admin' ? '#/admin' : '#/dashboard') : '#/start';
+  else route();
+})();
