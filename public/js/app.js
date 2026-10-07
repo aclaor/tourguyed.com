@@ -4,6 +4,16 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const peso = (n, cur = 'PHP') => { try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur || 'PHP', maximumFractionDigits: 2 }).format(n || 0) } catch { return (cur || '') + ' ' + Number(n || 0).toLocaleString() } };
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'KRW', 'CNY', 'HKD', 'TWD', 'SGD', 'MYR', 'THB', 'IDR', 'VND', 'PHP', 'INR', 'AUD', 'NZD', 'CAD', 'MXN', 'BRL', 'ARS', 'CLP', 'COP', 'PEN', 'ZAR', 'EGP', 'MAD', 'KES', 'NGN', 'AED', 'SAR', 'QAR', 'TRY', 'CHF', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF', 'ILS'];
 const COUNTRIES = (() => { try { const d = new Intl.DisplayNames(['en'], { type: 'region' }); return 'AF AL DZ AD AO AR AM AU AT AZ BS BH BD BB BY BE BZ BJ BT BO BA BW BR BN BG BF KH CM CA CV CL CN CO CR HR CU CY CZ DK DO EC EG SV EE ET FJ FI FR GE DE GH GR GT HN HK HU IS IN ID IR IQ IE IL IT JM JP JO KZ KE KR KW KG LA LV LB LT LU MO MG MY MV MT MU MX MD MC MN ME MA MZ MM NA NP NL NZ NI NG MK NO OM PK PA PG PY PE PH PL PT PR QA RO RU RW SA SN RS SC SG SK SI ZA ES LK SE CH TW TZ TH TL TN TR UG UA AE GB US UY UZ VE VN ZM ZW'.split(' ').map(c => d.of(c)).sort(); } catch { return [] } })();
+// viewer's currency from their locale (e.g. en-US → USD, ja-JP → JPY); falls back to USD
+const REGION_CUR = { US: 'USD', PR: 'USD', GB: 'GBP', IE: 'EUR', DE: 'EUR', FR: 'EUR', ES: 'EUR', IT: 'EUR', NL: 'EUR', BE: 'EUR', AT: 'EUR', PT: 'EUR', FI: 'EUR', GR: 'EUR', JP: 'JPY', KR: 'KRW', CN: 'CNY', HK: 'HKD', TW: 'TWD', SG: 'SGD', MY: 'MYR', TH: 'THB', ID: 'IDR', VN: 'VND', PH: 'PHP', IN: 'INR', AU: 'AUD', NZ: 'NZD', CA: 'CAD', MX: 'MXN', BR: 'BRL', AR: 'ARS', CL: 'CLP', CO: 'COP', PE: 'PEN', ZA: 'ZAR', EG: 'EGP', MA: 'MAD', KE: 'KES', NG: 'NGN', AE: 'AED', SA: 'SAR', QA: 'QAR', TR: 'TRY', CH: 'CHF', SE: 'SEK', NO: 'NOK', DK: 'DKK', PL: 'PLN', CZ: 'CZK', HU: 'HUF', IL: 'ILS' };
+const myCurrency = () => { try { const r = (navigator.languages || [navigator.language]).map(l => (l.split('-')[1] || '').toUpperCase()).find(x => REGION_CUR[x]); if (r) return REGION_CUR[r]; const tz = myTz(); if (tz.startsWith('Asia/Manila')) return 'PHP'; if (tz.startsWith('Europe/')) return 'EUR'; } catch { } return 'USD'; };
+const RATES = {};
+const getRates = async base => RATES[base] ||= await api('/rates?base=' + base).catch(() => ({ rates: { [base]: 1 } }));
+const approx = async (n, from, to) => { if (!from || !to || from === to) return null; const r = await getRates(from); const f = r.rates?.[to]; return f ? n * f : null; };
+const fmtWhen = (utc, tz) => { try { return new Intl.DateTimeFormat(undefined, { timeZone: tz || undefined, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(utc)); } catch { return new Date(utc).toLocaleString(); } };
+const fmtTime = (utc, tz) => { try { return new Intl.DateTimeFormat(undefined, { timeZone: tz || undefined, hour: 'numeric', minute: '2-digit' }).format(new Date(utc)); } catch { return '' } };
+const fmtDay = (utc, tz) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz || undefined, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(utc)); } catch { return new Date(utc).toISOString().slice(0, 10) } };
+const tzCity = tz => (tz || '').split('/').pop().replace(/_/g, ' ');
 const myTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone } catch { return 'UTC' } };
 let ME = null;
 // ---------- social sign-in (shared Leeys Technology Supabase project) ----------
@@ -135,8 +145,9 @@ const views = {
         <h3>${esc(g.name)}</h3>
         <p class="muted">${g.is_student ? '🎓 ' + esc(g.school) : esc(g.occupation)} · ${esc(g.location)}${g.country ? ', ' + esc(g.country) : ''}</p>
         <p class="stars">★ ${g.rating} <span class="muted">(${g.reviews} surveys) · ${g.acceptance}% acceptance</span></p>
-        <p>${tags(g.languages)}</p><p style="margin-top:8px"><b>${peso(g.price, g.currency)}</b> / ${esc(g.package_title)}</p>
+        <p>${tags(g.languages)}</p><p style="margin-top:8px"><b>${peso(g.price, g.currency)}</b> <small class="muted" data-cv="${g.price}|${g.currency}"></small> / ${esc(g.package_title)}</p>
         <a class="btn sm" style="margin-top:10px" href="#/guide/${g.id}">View profile</a></div></div>`).join('') || '<p>No guides match. Try fewer filters.</p>'}</div>`;
+    const mc = myCurrency(); document.querySelectorAll('[data-cv]').forEach(async el => { const [n, c] = el.dataset.cv.split('|'); const v = await approx(+n, c, mc); if (v) el.textContent = `(≈ ${peso(v, mc)})`; });
     $('#f').onclick = () => { const p = new URLSearchParams(); for (const k of ['country', 'place', 'activity', 'gender', 'language', 'student']) if ($('#' + k).value) p.set(k, $('#' + k).value); location.hash = '#/guides?' + p; };
   },
   async guide(id) {
@@ -147,13 +158,14 @@ const views = {
       <div><h1>${esc(g.name)}</h1><p class="muted">${g.is_student ? '🎓 Student · ' + esc(g.school) + ' (campus-limited)' : esc(g.occupation)} · ${esc(g.gender)}</p>
       <p class="stars" style="margin:8px 0">★ ${g.rating} · ${g.reviews} surveys · ${g.acceptance}% acceptance ${g.verified ? '· ✓ ID verified' : ''}</p>
       <p>${esc(g.bio)}</p>
-      <div class="panel" style="margin-top:16px"><h3>${esc(g.package_title)}</h3><p style="font:600 28px Lexend;color:var(--mint)">${peso(g.price, g.currency)} <span class="muted" style="font:14px Inter">/ ${g.duration_hours} hrs</span></p>
+      <div class="panel" style="margin-top:16px"><h3>${esc(g.package_title)}</h3><p style="font:600 28px Lexend;color:var(--mint)">${peso(g.price, g.currency)} <small class="muted" style="font:14px Poppins" data-cv="${g.price}|${g.currency}"></small> <span class="muted" style="font:14px Inter">/ ${g.duration_hours} hrs</span></p>
       <p><b>Places:</b> ${tags(g.places)}</p><p><b>Expertise:</b> ${tags(g.activities)}</p><p><b>Languages:</b> ${tags(g.languages)}</p>
       <p><b>Transport:</b> ${esc(g.transport)}</p>${g.offers_local ? '<p>✓ Can arrange other local guides</p>' : ''}
       <div class="two" style="gap:12px;margin-top:10px;align-items:start"><div><b>Included</b><ul style="margin-left:18px">${g.includes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
       <div><b>Not included</b><ul style="margin-left:18px">${g.excludes.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div></div>
       <button class="btn" style="margin-top:14px" id="book">Set appointment</button></div>
       <h3 style="margin-top:20px">Survey reviews</h3>${reviews.map(r => `<div class="panel" style="padding:12px;margin:8px 0"><b>${'★'.repeat(r.stars)}</b> ${esc(r.comment)}</div>`).join('') || '<p class="muted">No reviews yet.</p>'}</div></div>`;
+    const mc = myCurrency(); document.querySelectorAll('[data-cv]').forEach(async el => { const [n, c] = el.dataset.cv.split('|'); const v = await approx(+n, c, mc); if (v) el.textContent = `≈ ${peso(v, mc)}`; });
     $('#book').onclick = () => bookFlow(g);
   },
   async dashboard() {
@@ -277,7 +289,7 @@ const views = {
       <label>Languages you speak & understand ${R}</label><input id="languages" required value="${esc(L(g.languages))}">
       <label>How will you take tourists there? ${R}</label><input id="transport" required value="${esc(g.transport)}">
       <label>Package name ${R}</label><input id="package_title" required value="${esc(g.package_title)}">
-      <div class="two" style="gap:10px;grid-template-columns:1fr 1fr 1fr"><div><label>Currency ${R}</label><select id="currency" required><option value="">Select…</option>${CURRENCIES.map(c => `<option ${(g.currency || '') === c && g.price ? 'selected' : ''}>${c}</option>`).join('')}</select></div><div><label>Price ${R}</label><input id="price" type="number" min="1" step="0.01" required value="${g.price || ''}"></div><div><label>Hours ${R}</label><input id="duration_hours" type="number" min="1" required value="${g.duration_hours || ''}"></div></div>
+      <div class="two" style="gap:10px;grid-template-columns:1fr 1fr 1fr"><div><label>Currency ${R}</label><select id="currency" required><option value="">Select…</option>${CURRENCIES.map(c => `<option ${(g.price ? g.currency : myCurrency()) === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div><div><label>Price ${R}</label><input id="price" type="number" min="1" step="0.01" required value="${g.price || ''}"></div><div><label>Hours ${R}</label><input id="duration_hours" type="number" min="1" required value="${g.duration_hours || ''}"></div></div>
       <label>Included ${R} <small class="muted">(comma separated)</small></label><input id="includes" required value="${esc(L(g.includes))}">
       <label>Not included ${R} <small class="muted">(comma separated)</small></label><input id="excludes" required value="${esc(L(g.excludes))}">
       <label style="font-weight:400"><input type="checkbox" id="offers_local" ${g.offers_local ? 'checked' : ''}> I can arrange other local guides</label>
@@ -400,7 +412,7 @@ const views = {
   },
   async 'admin-bookings'() {
     if (!need('admin')) return; const { items } = await api('/admin/bookings');
-    V().innerHTML = `<h1>Bookings & fees</h1><table><tr><th>When</th><th>Tourist → Guide</th><th>Amount</th><th>20% fee</th><th>Pay</th><th>Status</th><th></th></tr>${items.map(b => `<tr><td>${b.day} ${b.slot}</td><td>${esc(b.tourist_name)} → ${esc(b.guide_name)}</td>
+    V().innerHTML = `<h1>Bookings & fees</h1><table><tr><th>When</th><th>Tourist → Guide</th><th>Amount</th><th>20% fee</th><th>Pay</th><th>Status</th><th></th></tr>${items.map(b => `<tr><td>${fmtWhen(b.start_utc, b.tz)}<br><small class="muted">${esc(tzCity(b.tz))}</small></td><td>${esc(b.tourist_name)} → ${esc(b.guide_name)}</td>
       <td>${peso(b.amount, b.currency)}${b.refund ? `<br><small>refund ${peso(b.refund, b.currency)}</small>` : ''}</td><td>${peso(b.platform_fee, b.currency)}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td><td><span class="status s-${b.status}">${b.status}</span></td>
       <td>${b.pay_method === 'cash' && b.status === 'completed' && ['cash_due', 'fee_reported'].includes(b.payout_status) ? `<button class="btn sm" data-fee="${b.id}">Fee received</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7">No bookings yet.</td></tr>'}</table>`;
     document.querySelectorAll('[data-fee]').forEach(b => b.onclick = async () => { await api(`/admin/bookings/${b.dataset.fee}/fee_received`, { method: 'POST' }); toast('Marked as received'); route(); });
@@ -451,8 +463,9 @@ function bookingTable(list) {
       if (b.status === 'completed') a.push(`<a class="btn sm ghost" href="#/guide/${b.guide_id}">Book again</a>`);
     }
     if (['accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`, `<a class="btn sm ghost" href="#/call?b=${b.id}">📹 Video</a>`);
-    return `<tr><td>${b.day} ${b.slot}<br><small class="muted">${esc((b.tz || '').split('/').pop().replace(/_/g, ' '))} time</small>${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
-      <td>${peso(b.amount, b.currency)}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee, b.currency)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund, b.currency)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td>
+    const other = b.tz && b.tz !== myTz() ? `<br><small class="muted">${isG ? 'Your' : 'Guide\'s'} time${isG ? '' : ' in ' + esc(tzCity(b.tz))}: ${fmtWhen(b.start_utc, b.tz)}</small>` : '';
+    return `<tr><td><b>${fmtWhen(b.start_utc, isG ? b.tz : undefined)}</b>${isG ? '' : other}${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
+      <td>${peso(b.amount, b.currency)}${b.pay_currency && b.pay_currency !== b.currency ? `<br><small>💵 paid in ${b.pay_currency}: ${peso(b.pay_amount, b.pay_currency)}</small>` : ''}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee, b.currency)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund, b.currency)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td>
       <td><span class="status s-${b.status}">${b.status.replace('_', ' ')}</span>${b.decline_reason ? `<br><small>${esc(b.decline_reason)}</small>` : ''}</td><td style="display:flex;gap:6px;flex-wrap:wrap">${a.join('')}</td></tr>`;
   }).join('')}</table>`;
 }
@@ -474,21 +487,32 @@ async function submitRate(id) { try { await api('/reviews', { method: 'POST', bo
 
 async function bookFlow(g) {
   if (!ME) return location.hash = '#/signup';
-  if (ME.user.role !== 'tourist') return toast('Sign in as a tourist to book');
-  const { slots, tz: gtz } = await api(`/guides/${g.id}/availability`); const byDay = {}; slots.forEach(s => (byDay[s.day] ||= []).push(s.slot));
-  const days = Object.keys(byDay); let day = days[0], slot = null;
-  const draw = () => modal(`<h3>Set appointment with ${esc(g.name)}</h3><label>Available dates</label><div class="cal">${days.map(d => `<button data-d="${d}" class="${d === day ? 'on' : ''}">${new Date(d).toDateString().slice(4, 10)}</button>`).join('') || '<p>No open dates.</p>'}</div>
-    <label>Time <small class="muted">(local time in ${esc((gtz || '').replace(/_/g, ' '))}${gtz !== myTz() ? ' — not your time zone' : ''})</small></label><div class="cal">${(byDay[day] || []).map(t => `<button data-t="${t}" class="${t === slot ? 'on' : ''}">${t}</button>`).join('')}</div>
-    <label>Your tour timeline</label><textarea id="tl" rows="3" placeholder="e.g. 9:00 meet at Fort Santiago → 11:00 Binondo lunch → 13:00 end"></textarea>
-    <label>Payment</label><select id="pm"><option value="cash">Cash to guide (${esc(g.currency || 'local currency')})</option>${(g.currency || 'PHP') === 'PHP' ? '<option value="online">Pay online — card, GCash, Maya, GrabPay (held safely)</option>' : ''}</select>
-    <p class="muted" style="font-size:13px;margin-top:10px">${peso(g.price, g.currency)} · Free cancellation until 30 min before. Later cancellation refunds half. Guide 30+ min late or no-show = full refund. No refund after you release payment.</p>
+  if (ME.user.role !== 'tourist') return toast('Switch to Tourist mode to book');
+  const { slots, tz: gtz } = await api(`/guides/${g.id}/availability`);
+  const me = myTz(), sameTz = gtz === me, gcur = g.currency || 'PHP', mcur = myCurrency();
+  // group the guide's open times by the TOURIST's local date
+  const byDay = {}; slots.forEach(s => (byDay[fmtDay(s.utc, me)] ||= []).push(s));
+  const days = Object.keys(byDay).sort(); let day = days[0], pick = null, payCur = gcur;
+  const conv = await approx(g.price, gcur, mcur);
+  const draw = () => modal(`<h3>Set appointment with ${esc(g.name)}</h3>
+    <label>Available dates <small class="muted">(your calendar)</small></label><div class="cal">${days.map(d => `<button data-d="${d}" class="${d === day ? 'on' : ''}">${new Date(d + 'T12:00').toDateString().slice(4, 10)}</button>`).join('') || '<p>No open dates yet.</p>'}</div>
+    <label>Time <small class="muted">(your local time · ${esc(tzCity(me))})</small></label>
+    <div class="cal" style="grid-template-columns:repeat(auto-fill,minmax(96px,1fr))">${(byDay[day] || []).map(s => `<button data-u="${s.utc}" class="${pick && pick.utc === s.utc ? 'on' : ''}">${fmtTime(s.utc, me)}${sameTz ? '' : `<br><small style="font-weight:400;opacity:.8">${s.slot} ${esc(tzCity(gtz))}</small>`}</button>`).join('')}</div>
+    ${pick && !sameTz ? `<p class="muted" style="font-size:13px;margin-top:8px">🕒 You: <b>${fmtWhen(pick.utc, me)}</b> · Guide in ${esc(tzCity(gtz))}: <b>${fmtWhen(pick.utc, gtz)}</b></p>` : ''}
+    <label>Your tour timeline</label><textarea id="tl" rows="3" placeholder="e.g. meet at the old town square → lunch at a local market → sunset viewpoint"></textarea>
+    <label>Payment</label><select id="pm"><option value="cash">Cash to guide</option>${gcur === 'PHP' ? '<option value="online">Pay online — card, GCash, Maya, GrabPay (held safely)</option>' : ''}</select>
+    <div id="curbox"><label>Pay cash in</label><select id="pc"><option value="${gcur}">${gcur} — guide's currency (${peso(g.price, gcur)})</option>${conv && mcur !== gcur ? `<option value="${mcur}" ${payCur === mcur ? 'selected' : ''}>${mcur} — your currency (≈ ${peso(conv, mcur)})</option>` : ''}${gcur !== 'USD' && mcur !== 'USD' ? `<option value="USD" ${payCur === 'USD' ? 'selected' : ''}>USD — US dollars</option>` : ''}</select></div>
+    <p class="muted" style="font-size:13px;margin-top:10px"><b>${peso(g.price, gcur)}</b>${conv ? ` (≈ ${peso(conv, mcur)})` : ''} · Free cancellation until 30 min before. Later cancellation refunds half. Guide 30+ min late or no-show = full refund. No refund after you release payment.</p>
+    <p class="muted" style="font-size:12px">Converted amounts use today's exchange rate and are approximate. <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">Rates by ExchangeRate-API</a></p>
     <button class="btn" style="margin-top:12px" id="cf">Confirm request</button>`);
   const wire = () => {
-    document.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { day = b.dataset.d; slot = null; draw(); wire(); });
-    document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { slot = b.dataset.t; const tl = $('#tl').value; draw(); wire(); $('#tl').value = tl; });
+    document.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { const tl = $('#tl').value; day = b.dataset.d; pick = null; draw(); wire(); $('#tl').value = tl; });
+    document.querySelectorAll('[data-u]').forEach(b => b.onclick = () => { const tl = $('#tl').value, pm = $('#pm').value; pick = byDay[day].find(s => s.utc === +b.dataset.u); draw(); wire(); $('#tl').value = tl; $('#pm').value = pm; $('#pm').onchange(); });
+    $('#pm').onchange = () => { $('#curbox').style.display = $('#pm').value === 'online' ? 'none' : ''; };
+    $('#pc') && ($('#pc').onchange = () => { payCur = $('#pc').value; });
     $('#cf') && ($('#cf').onclick = async () => {
-      if (!slot) return toast('Pick a time');
-      try { await api('/bookings', { method: 'POST', body: { guide_id: g.id, day, slot, timeline: $('#tl').value, pay_method: $('#pm').value } }); closeModal(); toast('Request sent! The guide has been notified.'); location.hash = '#/bookings'; } catch (e) { toast(e.message) }
+      if (!pick) return toast('Pick a time');
+      try { await api('/bookings', { method: 'POST', body: { guide_id: g.id, day: pick.day, slot: pick.slot, timeline: $('#tl').value, pay_method: $('#pm').value, pay_currency: $('#pm').value === 'online' ? gcur : ($('#pc')?.value || gcur) } }); closeModal(); toast('Request sent! The guide has been notified.'); location.hash = '#/bookings'; } catch (e) { toast(e.message) }
     });
   }; draw(); wire();
 }

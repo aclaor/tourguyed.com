@@ -96,6 +96,19 @@ async function rawUpload(env, req, url) {
   return J({ ok: 1, url: `/api/media/${mid}` });
 }
 
+// Exchange rates (free, no key), cached 6h at the edge. Used for "≈ your currency" and paying cash in the tourist's currency.
+async function rates(base) {
+  base = (base || 'USD').toUpperCase(); if (!/^[A-Z]{3}$/.test(base)) base = 'USD';
+  const key = new Request('https://rates.tourguyed.internal/' + base), cache = caches.default;
+  let hit = await cache.match(key); if (hit) return hit.json();
+  const r = await fetch('https://open.er-api.com/v6/latest/' + base).catch(() => null);
+  const d = r && r.ok ? await r.json() : null;
+  if (!d || d.result !== 'success') return { base, rates: { [base]: 1 }, ok: false };
+  const out = { base, rates: d.rates, ok: true, updated: d.time_last_update_utc };
+  await cache.put(key, new Response(JSON.stringify(out), { headers: { 'cache-control': 'max-age=21600', 'content-type': 'application/json' } }));
+  return out;
+}
+
 async function resetLink(env, uid, origin) {
   const t = crypto.randomUUID() + crypto.randomUUID();
   await env.DB.prepare('INSERT INTO resets(token,user_id,expires) VALUES(?,?,?)').bind(t, uid, Date.now() + 3600e3).run();
@@ -140,6 +153,7 @@ async function migrate(env) {
     "CREATE TABLE IF NOT EXISTS resets(token TEXT PRIMARY KEY, user_id INTEGER, expires INTEGER)", "ALTER TABLE media ADD COLUMN size INTEGER DEFAULT 0",
     "ALTER TABLE guides ADD COLUMN country TEXT", "ALTER TABLE guides ADD COLUMN currency TEXT DEFAULT 'PHP'", "ALTER TABLE guides ADD COLUMN tz TEXT DEFAULT 'Asia/Manila'",
     "ALTER TABLE bookings ADD COLUMN currency TEXT DEFAULT 'PHP'", "ALTER TABLE bookings ADD COLUMN tz TEXT DEFAULT 'Asia/Manila'",
+    "ALTER TABLE bookings ADD COLUMN pay_currency TEXT", "ALTER TABLE bookings ADD COLUMN pay_amount REAL",
     "CREATE TABLE IF NOT EXISTS signals(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER, sender_id INTEGER, type TEXT, data TEXT, created INTEGER)"];
   for (const q of stmts) await env.DB.prepare(q).run().catch(() => {}); // ignore 'duplicate column'
 }
@@ -227,6 +241,7 @@ export async function onRequest({ request: req, env, params }) {
         ORDER BY g.verified DESC, (g.rating*20 + MIN(g.reviews,200)*0.1 + (CASE WHEN g.accepted+g.declined=0 THEN 100 ELSE g.accepted*100.0/(g.accepted+g.declined) END)*0.3) DESC`).bind(...b).all();
       return J({ guides: rows.results.map(shapeGuide) });
     }
+    if (route === 'GET /rates') return J(await rates(url.searchParams.get('base')));
     if (route === 'GET /countries') return J({ countries: (await env.DB.prepare("SELECT country, COUNT(*) n FROM guides WHERE verified=1 AND price>0 AND country IS NOT NULL AND country!='' GROUP BY country ORDER BY n DESC").all()).results });
     if (route === 'GET /guides/:id') {
       const g = await env.DB.prepare('SELECT g.*,u.name FROM guides g JOIN users u ON u.id=g.user_id WHERE g.user_id=?').bind(id).first();
@@ -240,7 +255,8 @@ export async function onRequest({ request: req, env, params }) {
         (SELECT 1 FROM bookings b WHERE b.guide_id=availability.guide_id AND b.day=availability.day AND b.slot=availability.slot AND b.status IN('requested','accepted'))
         ORDER BY day,slot`).bind(id, today).all();
       const gtz = await env.DB.prepare('SELECT tz FROM guides WHERE user_id=?').bind(id).first();
-      return J({ slots: a.results, tz: gtz?.tz || 'Asia/Manila' });
+      const tz = gtz?.tz || 'Asia/Manila';
+      return J({ slots: a.results.map(x => ({ ...x, utc: zonedToUtc(x.day, x.slot, tz) })).filter(x => x.utc > Date.now() + 30 * 60e3), tz });
     }
 
     if (route === 'GET /media/:id') {
@@ -331,9 +347,12 @@ export async function onRequest({ request: req, env, params }) {
       const pm = body.pay_method === 'online' ? 'online' : 'cash';
       if (pm === 'online' && !env.PAYMONGO_SECRET_KEY) return err('Online payment is not available yet. Please choose cash.');
       if (pm === 'online' && (g.currency || 'PHP') !== 'PHP') return err('Online payment is not available for this guide yet. Please choose cash.');
-      const r = await env.DB.prepare('INSERT INTO bookings(tourist_id,guide_id,day,slot,timeline,pay_method,amount,platform_fee,payout_status,currency,tz) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .bind(u.id, g.user_id, body.day, body.slot, body.timeline || '', pm, g.price, +(g.price * FEE).toFixed(2), pm === 'cash' ? 'cash_due' : 'unpaid', g.currency || 'PHP', g.tz || 'Asia/Manila').run();
-      await notify(env, g.user_id, 'New TourGuyed booking request', `You have a new request for ${body.day} ${body.slot}. Open your dashboard to accept or decline.`);
+      const gcur = g.currency || 'PHP'; let payCur = pm === 'online' ? gcur : String(body.pay_currency || gcur).toUpperCase(), payAmt = g.price;
+      if (!/^[A-Z]{3}$/.test(payCur)) payCur = gcur;
+      if (payCur !== gcur) { const rt = await rates(gcur); const f = rt.rates?.[payCur]; if (!f) { payCur = gcur; } else payAmt = Math.round(g.price * f * 100) / 100; }
+      const r = await env.DB.prepare('INSERT INTO bookings(tourist_id,guide_id,day,slot,timeline,pay_method,amount,platform_fee,payout_status,currency,tz,pay_currency,pay_amount) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(u.id, g.user_id, body.day, body.slot, body.timeline || '', pm, g.price, +(g.price * FEE).toFixed(2), pm === 'cash' ? 'cash_due' : 'unpaid', gcur, g.tz || 'Asia/Manila', payCur, payAmt).run();
+      await notify(env, g.user_id, 'New TourGuyed booking request', `You have a new request for ${body.day} ${body.slot} (your local time). Open your dashboard to accept or decline.`);
       return J({ id: r.meta.last_row_id });
     }
     if (route === 'GET /bookings') {
@@ -342,7 +361,7 @@ export async function onRequest({ request: req, env, params }) {
         (SELECT 1 FROM reviews r WHERE r.booking_id=b.id) reviewed FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id
         JOIN guides g ON g.user_id=b.guide_id WHERE b.${col}=? ORDER BY b.day DESC, b.slot DESC`).bind(u.id).all();
       // guides only ever see the tourist's masked relay email
-      return J({ bookings: rows.results.map(b => ({ ...b, tourist_contact: relayEmail({ role: 'tourist', id: b.tourist_uid }) })) });
+      return J({ bookings: rows.results.map(b => ({ ...b, start_utc: zonedToUtc(b.day, b.slot, b.tz), tourist_contact: relayEmail({ role: 'tourist', id: b.tourist_uid }) })) });
     }
     if (route.startsWith('POST /bookings/:id/')) {
       const action = p[2];
@@ -495,7 +514,7 @@ export async function onRequest({ request: req, env, params }) {
         return J({ ok: 1 });
       }
       if (route === 'GET /admin/users') return J({ items: await all(`SELECT u.id,u.role,u.name,u.email,u.id_status,u.created_at,g.verified,g.rating,g.reviews FROM users u LEFT JOIN guides g ON g.user_id=u.id WHERE u.role!='admin' ORDER BY u.id DESC LIMIT 500`) });
-      if (route === 'GET /admin/bookings') return J({ items: await all(`SELECT b.*,gu.name guide_name,tu.name tourist_name FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id ORDER BY b.id DESC LIMIT 300`) });
+      if (route === 'GET /admin/bookings') return J({ items: (await all(`SELECT b.*,gu.name guide_name,tu.name tourist_name FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id ORDER BY b.id DESC LIMIT 300`)).map(b => ({ ...b, start_utc: zonedToUtc(b.day, b.slot, b.tz) })) });
       if (route === 'POST /admin/media/:id/delete') { const m = await env.DB.prepare('SELECT key FROM media WHERE id=?').bind(id).first(); if (m && env.FILES) await env.FILES.delete(m.key).catch(() => {}); await env.DB.prepare('DELETE FROM media WHERE id=?').bind(id).run(); return J({ ok: 1 }); }
       if (route === 'POST /admin/users/:id/reset') return J({ link: await resetLink(env, id, url.origin) });
       if (route === 'GET /admin/payouts') return J({ items: (await all(`SELECT b.id,b.day,b.slot,b.amount,b.platform_fee,b.payout_status,b.guide_paid,b.status,b.currency,u.name guide_name,g.wise_email
