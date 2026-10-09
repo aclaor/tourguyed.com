@@ -207,7 +207,7 @@
  <p class="eyebrow">Travelers looking for guides</p>
  <div class="two" style="align-items:end"><h2 class="h2">See Tourist Requests</h2>
   <p class="lead">Travelers post their trip plans and local guides send offers. Are you a local? Pick a request, send your price and plan, and chat to agree the details.</p></div>
- <div class="grid3" id="treqs" style="margin-top:26px"><p class="muted">Loading requests…</p></div>
+ <div class="grid4 reqgrid" id="treqs" style="margin-top:26px"><p class="muted">Loading requests…</p></div>
  <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:28px"><a class="btn" href="/app.html#/requests">I'm a guide — send offers</a><a class="btn ghost" href="/app.html#/plan">Post my trip plan</a></div></div>
 </section>
 
@@ -230,17 +230,22 @@
 <footer>© <span id="y"></span> TourGuyed · <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a> · <a href="/tourguides">All tour guides</a> · <span class="handle">@tourguyed</span></footer>
 </div></div>
 
+<script src="/js/examples.js"></script>
 <script>
 document.getElementById('y').textContent=new Date().getFullYear();
 try{if(localStorage.tg){const a=document.getElementById('signin');a.textContent='My dashboard';a.href='/app.html#/dashboard';}}catch(e){}
 const money=(n,c)=>{try{return new Intl.NumberFormat(undefined,{style:'currency',currency:c||'PHP',maximumFractionDigits:0}).format(n)}catch{return (c||'')+' '+n}};
-fetch('/api/requests/public?limit=6').then(r=>r.json()).catch(()=>null).then(d=>{
- const el=document.getElementById('treqs'),rs=(d&&d.requests)||[],e=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+fetch('/api/requests/public?limit=7').then(r=>r.json()).catch(()=>null).then(d=>{
+ const el=document.getElementById('treqs'),real=(d&&d.requests)||[],e=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const rs=real.concat((window.TG_EXAMPLES||[]).slice(0,Math.max(0,7-real.length)));
  const t=a=>(a||[]).map(x=>`<span class="tag">${e(x)}</span>`).join('');
- el.innerHTML=rs.map(r=>`<div class="card req"><div class="body"><div class="req-top"><span class="avatar">${e((r.name||'?')[0])}</span><div><b>${e(r.name)}</b><br><small class="muted">is looking for a guide</small></div></div>
-  <h3 style="margin:10px 0 4px">📍 ${e(r.city)}, ${e(r.country)}</h3><p class="muted">📅 ${e(r.start_date)}${r.end_date?' → '+e(r.end_date):''}${r.flexible?' (flexible)':''}<br>👥 ${r.adults} adult${r.adults>1?'s':''}${r.children?' + '+r.children+' kid'+(r.children>1?'s':''):''}${r.budget?' · 💰 '+money(r.budget,r.currency):''}</p>
-  <p style="margin:8px 0">${t(r.interests)}</p><p class="muted" style="font-size:13px">${r.offers} offer${r.offers===1?'':'s'} so far</p>
-  <a class="btn sm" style="margin-top:10px" href="/app.html#/requests?place=${encodeURIComponent(r.city)}">Send an offer</a></div></div>`).join('')||'<div class="card"><div class="body"><h3>Be the first!</h3><p class="muted">No open trip plans yet. Travelers — post where you\'re going and let local guides come to you.</p><a class="btn sm" style="margin-top:10px" href="/app.html#/plan">Post my trip plan</a></div></div>';});
+ const dt=s=>{try{return new Date(s+'T12:00').toLocaleDateString(undefined,{month:'short',day:'numeric'})}catch{return s}};
+ el.innerHTML=rs.map(r=>`<div class="card req${r.example?' example':''}">${r.photo?`<div class="pic"><img src="${e(r.photo)}" alt="Example traveler planning a trip to ${e(r.city)}" loading="lazy">${r.example?'<span class="badge ex">Example</span>':''}</div>`:''}<div class="body">
+  <div class="req-top">${r.photo?'':`<span class="avatar">${e((r.name||'?')[0])}</span>`}<div><b>${e(r.name)}</b>${r.example?' <small class="muted">· sample request</small>':''}<br><small class="muted">is looking for a guide</small></div></div>
+  <h3 style="margin:10px 0 4px">📍 ${e(r.city)}, ${e(r.country)}</h3><p class="muted">📅 ${dt(r.start_date)}${r.end_date?' → '+dt(r.end_date):''}${r.flexible?' (flexible)':''}<br>👥 ${r.adults} adult${r.adults>1?'s':''}${r.children?' + '+r.children+' kid'+(r.children>1?'s':''):''}${r.budget?' · 💰 '+money(r.budget,r.currency):''}${r.tour_style?' · '+e(r.tour_style):''}</p>
+  <p style="margin:8px 0">${t(r.interests)}</p>${r.notes&&r.example?`<p class="muted" style="font-size:13px;font-style:italic">“${e(r.notes)}”</p>`:''}
+  ${r.example?`<a class="btn sm ghost" style="margin-top:10px" href="/app.html#/plan">Post a request like this</a>`:`<p class="muted" style="font-size:13px">${r.offers} offer${r.offers===1?'':'s'} so far</p><a class="btn sm" style="margin-top:10px" href="/app.html#/requests?place=${encodeURIComponent(r.city)}">Send an offer</a>`}</div></div>`).join('');
+ if(!real.length) el.insertAdjacentHTML('beforebegin','<p class="muted" id="exnote" style="margin-top:14px">✨ These are example requests to show how it works — post yours and it will appear here.</p>');});
 fetch('/api/guides').then(r=>r.json()).catch(()=>null).then(d=>{
  const g=(d&&d.guides)||[];const el=document.getElementById('featured');
  el.innerHTML=g.slice(0,3).map(x=>`<div class="card"><div class="pic"><img src="${x.photo}" alt="${x.name}">${x.verified?'<span class="badge">✓ Verified</span>':''}</div><div class="body"><h3>${x.name}</h3><p class="muted">${x.is_student?'🎓 '+x.school:x.occupation} · ${x.location}${x.country?', '+x.country:''}</p><p class="stars">★ ${x.rating} <span class="muted">(${x.reviews} surveys)</span></p><p style="margin:8px 0 12px">From <b>${money(x.price,x.currency)}</b></p><a class="btn sm" href="/tourguide/${x.id}">View profile</a></div></div>`).join('')||'<p class="muted">Guides coming soon.</p>';});

@@ -378,7 +378,10 @@ const views = {
             ${o.message ? `<p class="muted" style="white-space:pre-wrap">${esc(o.message)}</p>` : ''}${o.itinerary ? `<details><summary>Proposed itinerary</summary><p style="white-space:pre-wrap">${esc(o.itinerary)}</p></details>` : ''}</div>
           <div class="offer-act"><span class="status s-${o.status === 'pending' ? 'requested' : o.status === 'accepted' ? 'completed' : 'declined'}">${o.status}</span>
             ${o.status === 'pending' ? `<button class="btn sm" data-acc="${o.id}" data-cur="${o.currency}">Accept</button><button class="btn sm ghost" data-thr="${o.id}">💬 Chat / negotiate</button><button class="btn sm ghost" data-dec="${o.id}">Decline</button>` : o.status === 'accepted' ? '<a class="btn sm" href="#/bookings">Go to booking</a>' : ''}</div></div>`).join('') || '<p class="muted">No offers yet — guides in this area will be notified when they browse requests.</p>'}
-      </div>`).join('') || `<div class="panel" style="text-align:center;padding:40px"><p style="font-size:40px">🗺</p><h3>No trip plans yet</h3><p class="muted" style="margin:8px 0 16px">Going to Hawaii, Kyoto or Lisbon? Post your plan and let local guides come to you.</p><a class="btn" href="#/plan">＋ Add your first trip plan</a></div>`}`;
+      </div>`).join('') || `<div class="panel" style="text-align:center;padding:40px"><p style="font-size:40px">🗺</p><h3>No trip plans yet</h3><p class="muted" style="margin:8px 0 16px">Going to Hawaii, Kyoto or Lisbon? Post your plan and let local guides come to you.</p><a class="btn" href="#/plan">＋ Add your first trip plan</a></div>
+      <h2 style="font-size:24px;margin:30px 0 6px">Need inspiration?</h2><p class="muted" style="margin-bottom:14px">Example trip plans — this is what guides will see (they only see your first name and last initial).</p>
+      <div class="grid3 reqs">${(window.TG_EXAMPLES || []).slice(0, 3).map(r => reqCard(r)).join('')}</div>`}`;
+    wireExamples();
     document.querySelectorAll('[data-cv]').forEach(async el => { const [n, c] = el.dataset.cv.split('|'); const v = await approx(+n, c, mc); if (v) el.textContent = `≈ ${peso(v, mc)}`; });
     document.querySelectorAll('[data-close]').forEach(b => b.onclick = async () => { await api(`/requests/${b.dataset.close}/close`, { method: 'POST', body: { reopen: !!b.dataset.re } }); route(); });
     document.querySelectorAll('[data-thr]').forEach(b => b.onclick = () => offerThread(+b.dataset.thr));
@@ -442,7 +445,10 @@ const views = {
       ${d.verified ? '' : '<div class="panel">⏳ You can browse requests now. To send offers and see meeting places & notes, your ID must be verified — upload it in <a href="#/profile">My profile</a>.</div>'}
       <div class="panel" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div style="flex:1;min-width:180px"><label>Destination (city or country)</label><input id="place" value="${esc(q.place || '')}" placeholder="e.g. ${esc(ME.guide?.location || 'Honolulu')}"></div><button class="btn" id="f">Search</button>${q.place ? '<a class="btn ghost" href="#/requests">Show all</a>' : ''}</div>
       <p class="muted" style="margin-bottom:12px">${d.requests.length} open request(s)</p>
-      <div class="grid3 reqs">${d.requests.map(r => reqCard(r, true)).join('') || '<p class="muted">No open requests here yet. Check back soon!</p>'}</div>`;
+      <div class="grid3 reqs">${d.requests.map(r => reqCard(r, true)).join('') || '<p class="muted">No open requests here yet. Check back soon!</p>'}</div>
+      ${d.requests.length < 3 && !q.place ? `<h2 style="font-size:24px;margin:34px 0 6px">What tourist requests look like</h2><p class="muted" style="margin-bottom:14px">Examples only — when real travelers post plans, they'll appear above and you can send offers.</p>
+        <div class="grid3 reqs">${(window.TG_EXAMPLES || []).map(r => reqCard(r, true)).join('')}</div>` : ''}`;
+    wireExamples();
     $('#f').onclick = () => { location.hash = '#/requests?' + new URLSearchParams($('#place').value ? { place: $('#place').value } : {}); };
     document.querySelectorAll('[data-more]').forEach(b => b.onclick = () => { const r = d.requests.find(x => x.id === +b.dataset.more); modal(reqDetail(r) + (d.verified ? `<button class="btn" style="margin-top:14px" onclick="closeModal();offerForm(${r.id})">${r.my_offer ? 'Update my offer' : 'Send an offer'}</button>` : '')); });
     document.querySelectorAll('[data-offer]').forEach(b => b.onclick = () => offerForm(+b.dataset.offer, d.requests.find(x => x.id === +b.dataset.offer)));
@@ -603,13 +609,14 @@ function zoned(day, slot, tz) {
 }
 function reqCard(r, forGuide) {
   const who = `${r.adults} adult${r.adults > 1 ? 's' : ''}${r.children ? ' + ' + r.children + ' kid' + (r.children > 1 ? 's' : '') : ''}`;
-  return `<div class="card req"><div class="body"><div class="req-top"><span class="avatar">${esc((r.name || '?')[0])}</span><div><b>${esc(r.name)}</b>${r.tourist_verified ? ' <span class="tag fill">✓ ID</span>' : ''}<br><small class="muted">is looking for a guide</small></div></div>
+  return `<div class="card req${r.example ? ' example' : ''}">${r.photo ? `<div class="pic"><img src="${esc(r.photo)}" alt="" loading="lazy">${r.example ? '<span class="badge ex">Example</span>' : ''}</div>` : ''}<div class="body"><div class="req-top">${r.photo ? '' : `<span class="avatar">${esc((r.name || '?')[0])}</span>`}<div><b>${esc(r.name)}</b>${r.tourist_verified ? ' <span class="tag fill">✓ ID</span>' : ''}${r.example ? ' <small class="muted">· sample</small>' : ''}<br><small class="muted">is looking for a guide</small></div></div>
     <h3 style="margin:10px 0 4px">📍 ${esc(r.city)}, ${esc(r.country)}</h3>
     <p class="muted">📅 ${esc(r.start_date)}${r.end_date ? ' → ' + esc(r.end_date) : ''}${r.flexible ? ' (flexible)' : ''}<br>👥 ${who}${r.budget ? ` · 💰 ${peso(r.budget, r.currency)}` : ''}${r.tour_style ? ' · ' + esc(r.tour_style) : ''}</p>
     <p style="margin:8px 0">${tags(r.interests)}${r.languages?.length ? ' 🗣 ' + tags(r.languages) : ''}</p>
-    <p class="muted" style="font-size:13px">${r.offers} offer${r.offers === 1 ? '' : 's'} so far</p>
-    ${forGuide ? `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn sm ghost" data-more="${r.id}">Details</button><button class="btn sm" data-offer="${r.id}">${r.my_offer ? 'Update offer' : 'Send offer'}</button></div>` : ''}</div></div>`;
+    ${r.example ? '<p class="muted" style="font-size:13px">Example only — not a real traveler</p>' : `<p class="muted" style="font-size:13px">${r.offers} offer${r.offers === 1 ? '' : 's'} so far</p>`}
+    ${r.example ? `<button class="btn sm ghost" style="margin-top:10px" data-ex="${r.id}">See full example</button>` : forGuide ? `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn sm ghost" data-more="${r.id}">Details</button><button class="btn sm" data-offer="${r.id}">${r.my_offer ? 'Update offer' : 'Send offer'}</button></div>` : ''}</div></div>`;
 }
+function wireExamples() { document.querySelectorAll('[data-ex]').forEach(b => b.onclick = () => { const r = (window.TG_EXAMPLES || []).find(x => x.id === b.dataset.ex); modal('<p><span class="tag fill">EXAMPLE</span> <span class="muted">A sample request showing what travelers can share.</span></p>' + reqDetail(r)); }); }
 function reqDetail(r) {
   const row = (k, v) => v ? `<p><b>${k}:</b> ${esc(v)}</p>` : '';
   return `<h3>📍 ${esc(r.city)}, ${esc(r.country)}</h3><p class="muted">${esc(r.name)} · ${esc(r.start_date)}${r.end_date ? ' → ' + esc(r.end_date) : ''}</p>
