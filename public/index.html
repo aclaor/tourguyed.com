@@ -17,7 +17,7 @@
 <div class="cloud" style="left:-80px;top:380px"></div><div class="cloud" style="right:-60px;bottom:30px"></div>
 <div class="wrap">
 <nav class="nav"><a class="brand" href="/"><span class="logo">T</span><b>TourGuyed</b></a>
-<ul><li><a href="#overview">Overview</a></li><li><a href="#benefits">Benefits</a></li><li><a href="#impact">Impact</a></li><li><a href="#features">Features</a></li><li><a href="#how">How it works</a></li><li><a href="#guides">Guides</a></li><li><a href="#contact">Contact</a></li></ul>
+<ul><li><a href="#overview">Overview</a></li><li><a href="#benefits">Benefits</a></li><li><a href="#impact">Impact</a></li><li><a href="#features">Features</a></li><li><a href="#how">How it works</a></li><li><a href="#guides">Guides</a></li><li><a href="#requests">Tourist requests</a></li><li><a href="#contact">Contact</a></li></ul>
 <span style="display:flex;gap:8px"><a class="btn ghost sm install-btn" data-install href="#">📲 Install app</a><a class="btn sm" id="signin" href="/app.html#/login">Sign in</a></span></nav>
 
 <header class="hero"><div class="ticket"><span class="notch t"></span><span class="notch b"></span>
@@ -202,7 +202,16 @@
  <div style="text-align:center;margin-top:28px"><a class="btn" href="/tourguides">See all tourguides</a></div></div>
 </section>
 
-<section class="sec"><div class="rail"><span>14</span></div>
+
+<section id="requests" class="sec"><div class="rail"><span>14</span></div><div>
+ <p class="eyebrow">Travelers looking for guides</p>
+ <div class="two" style="align-items:end"><h2 class="h2">See Tourist Requests</h2>
+  <p class="lead">Travelers post their trip plans and local guides send offers. Are you a local? Pick a request, send your price and plan, and chat to agree the details.</p></div>
+ <div class="grid3" id="treqs" style="margin-top:26px"><p class="muted">Loading requests…</p></div>
+ <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:28px"><a class="btn" href="/app.html#/requests">I'm a guide — send offers</a><a class="btn ghost" href="/app.html#/plan">Post my trip plan</a></div></div>
+</section>
+
+<section class="sec"><div class="rail"><span>15</span></div>
  <div class="two"><div class="strip">
    <div class="photo" style="flex-basis:48%;height:340px"><img src="https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=75" alt=""><span class="check">✓</span></div>
    <div class="photo" style="flex-basis:48%;height:340px"><img src="https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&w=800&q=75" alt=""><span class="check">✓</span></div></div>
@@ -210,7 +219,7 @@
   <a class="btn" style="margin-top:22px" href="/app.html#/start?role=guide">Start guiding</a></div></div>
 </section>
 
-<section id="contact" class="sec"><div class="rail"><span>15</span></div>
+<section id="contact" class="sec"><div class="rail"><span>16</span></div>
  <div class="two"><div class="photo" style="height:380px"><img src="https://images.unsplash.com/photo-1533105079780-92b9be482077?auto=format&fit=crop&w=800&q=75" alt="Hillside village"></div>
   <div><h2 class="h2">Thank You<br>Very Much!</h2>
   <span class="btn sm" style="cursor:default">Contact Us</span>
@@ -225,6 +234,13 @@
 document.getElementById('y').textContent=new Date().getFullYear();
 try{if(localStorage.tg){const a=document.getElementById('signin');a.textContent='My dashboard';a.href='/app.html#/dashboard';}}catch(e){}
 const money=(n,c)=>{try{return new Intl.NumberFormat(undefined,{style:'currency',currency:c||'PHP',maximumFractionDigits:0}).format(n)}catch{return (c||'')+' '+n}};
+fetch('/api/requests/public?limit=6').then(r=>r.json()).catch(()=>null).then(d=>{
+ const el=document.getElementById('treqs'),rs=(d&&d.requests)||[],e=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const t=a=>(a||[]).map(x=>`<span class="tag">${e(x)}</span>`).join('');
+ el.innerHTML=rs.map(r=>`<div class="card req"><div class="body"><div class="req-top"><span class="avatar">${e((r.name||'?')[0])}</span><div><b>${e(r.name)}</b><br><small class="muted">is looking for a guide</small></div></div>
+  <h3 style="margin:10px 0 4px">📍 ${e(r.city)}, ${e(r.country)}</h3><p class="muted">📅 ${e(r.start_date)}${r.end_date?' → '+e(r.end_date):''}${r.flexible?' (flexible)':''}<br>👥 ${r.adults} adult${r.adults>1?'s':''}${r.children?' + '+r.children+' kid'+(r.children>1?'s':''):''}${r.budget?' · 💰 '+money(r.budget,r.currency):''}</p>
+  <p style="margin:8px 0">${t(r.interests)}</p><p class="muted" style="font-size:13px">${r.offers} offer${r.offers===1?'':'s'} so far</p>
+  <a class="btn sm" style="margin-top:10px" href="/app.html#/requests?place=${encodeURIComponent(r.city)}">Send an offer</a></div></div>`).join('')||'<div class="card"><div class="body"><h3>Be the first!</h3><p class="muted">No open trip plans yet. Travelers — post where you\'re going and let local guides come to you.</p><a class="btn sm" style="margin-top:10px" href="/app.html#/plan">Post my trip plan</a></div></div>';});
 fetch('/api/guides').then(r=>r.json()).catch(()=>null).then(d=>{
  const g=(d&&d.guides)||[];const el=document.getElementById('featured');
  el.innerHTML=g.slice(0,3).map(x=>`<div class="card"><div class="pic"><img src="${x.photo}" alt="${x.name}">${x.verified?'<span class="badge">✓ Verified</span>':''}</div><div class="body"><h3>${x.name}</h3><p class="muted">${x.is_student?'🎓 '+x.school:x.occupation} · ${x.location}${x.country?', '+x.country:''}</p><p class="stars">★ ${x.rating} <span class="muted">(${x.reviews} surveys)</span></p><p style="margin:8px 0 12px">From <b>${money(x.price,x.currency)}</b></p><a class="btn sm" href="/tourguide/${x.id}">View profile</a></div></div>`).join('')||'<p class="muted">Guides coming soon.</p>';});

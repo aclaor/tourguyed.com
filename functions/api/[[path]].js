@@ -15,6 +15,11 @@ async function verify(pw, stored) {
   if (stored === 'OAUTH') return false; // social-login account: use Google/Facebook, or set a password via 'Forgot password'
   return (await hash(pw, stored.split(':')[0])) === stored;
 }
+const shortName = n => { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0].toUpperCase()}.` : (p[0] || 'Traveler'); };
+const reqPublic = r => ({ id: r.id, name: shortName(r.tourist_name), city: r.city, country: r.country, start_date: r.start_date, end_date: r.end_date, flexible: r.flexible, adults: r.adults, children: r.children,
+  budget: r.budget, currency: r.currency, interests: arr(r.interests), languages: arr(r.languages), tour_style: r.tour_style, pace: r.pace, hours_per_day: r.hours_per_day, guide_gender: r.guide_gender, student_ok: r.student_ok,
+  offers: r.offers || 0, created_at: r.created_at });
+const reqFull = r => ({ ...reqPublic(r), meeting_place: r.meeting_place, accommodation: r.accommodation, accommodation_help: r.accommodation_help, transport: r.transport, requirements: r.requirements, dietary: r.dietary, notes: r.notes, status: r.status });
 const relayEmail = u => `${u.role}-${u.id}@relay.tourguyed.com`; // masked "sudo" email
 
 async function me(env, req) {
@@ -154,6 +159,13 @@ async function migrate(env) {
     "ALTER TABLE guides ADD COLUMN country TEXT", "ALTER TABLE guides ADD COLUMN currency TEXT DEFAULT 'PHP'", "ALTER TABLE guides ADD COLUMN tz TEXT DEFAULT 'Asia/Manila'",
     "ALTER TABLE bookings ADD COLUMN currency TEXT DEFAULT 'PHP'", "ALTER TABLE bookings ADD COLUMN tz TEXT DEFAULT 'Asia/Manila'",
     "ALTER TABLE bookings ADD COLUMN pay_currency TEXT", "ALTER TABLE bookings ADD COLUMN pay_amount REAL",
+    `CREATE TABLE IF NOT EXISTS trip_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, tourist_id INTEGER NOT NULL, city TEXT, country TEXT, start_date TEXT, end_date TEXT, flexible INTEGER DEFAULT 0,
+      adults INTEGER DEFAULT 1, children INTEGER DEFAULT 0, budget REAL, currency TEXT, interests TEXT DEFAULT '[]', languages TEXT DEFAULT '[]', guide_gender TEXT, student_ok INTEGER DEFAULT 1,
+      tour_style TEXT, pace TEXT, hours_per_day REAL, meeting_place TEXT, accommodation TEXT, accommodation_help INTEGER DEFAULT 0, transport TEXT, requirements TEXT, dietary TEXT, notes TEXT,
+      status TEXT DEFAULT 'open', created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS offers(id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER NOT NULL, guide_id INTEGER NOT NULL, price REAL, currency TEXT, day TEXT, slot TEXT, hours REAL,
+      message TEXT, itinerary TEXT, status TEXT DEFAULT 'pending', booking_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(request_id, guide_id))`,
+    `CREATE TABLE IF NOT EXISTS offer_msgs(id INTEGER PRIMARY KEY AUTOINCREMENT, offer_id INTEGER, sender_id INTEGER, body TEXT, price REAL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
     "CREATE TABLE IF NOT EXISTS signals(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER, sender_id INTEGER, type TEXT, data TEXT, created INTEGER)"];
   for (const q of stmts) await env.DB.prepare(q).run().catch(() => {}); // ignore 'duplicate column'
 }
@@ -240,6 +252,11 @@ export async function onRequest({ request: req, env, params }) {
       const rows = await env.DB.prepare(`SELECT g.*,u.name FROM guides g JOIN users u ON u.id=g.user_id WHERE ${where.join(' AND ')}
         ORDER BY g.verified DESC, (g.rating*20 + MIN(g.reviews,200)*0.1 + (CASE WHEN g.accepted+g.declined=0 THEN 100 ELSE g.accepted*100.0/(g.accepted+g.declined) END)*0.3) DESC`).bind(...b).all();
       return J({ guides: rows.results.map(shapeGuide) });
+    }
+    if (route === 'GET /requests/public') {
+      const rows = (await env.DB.prepare(`SELECT r.*, u.name tourist_name, (SELECT COUNT(*) FROM offers o WHERE o.request_id=r.id) offers FROM trip_requests r JOIN users u ON u.id=r.tourist_id
+        WHERE r.status='open' AND (r.end_date IS NULL OR r.end_date='' OR r.end_date>=date('now')) ORDER BY r.id DESC LIMIT ?`).bind(Math.min(+url.searchParams.get('limit') || 12, 50)).all()).results;
+      return J({ requests: rows.map(reqPublic) });
     }
     if (route === 'GET /rates') return J(await rates(url.searchParams.get('base')));
     if (route === 'GET /countries') return J({ countries: (await env.DB.prepare("SELECT country, COUNT(*) n FROM guides WHERE verified=1 AND price>0 AND country IS NOT NULL AND country!='' GROUP BY country ORDER BY n DESC").all()).results });
@@ -361,7 +378,8 @@ export async function onRequest({ request: req, env, params }) {
         (SELECT 1 FROM reviews r WHERE r.booking_id=b.id) reviewed FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id
         JOIN guides g ON g.user_id=b.guide_id WHERE b.${col}=? ORDER BY b.day DESC, b.slot DESC`).bind(u.id).all();
       // guides only ever see the tourist's masked relay email
-      return J({ bookings: rows.results.map(b => ({ ...b, start_utc: zonedToUtc(b.day, b.slot, b.tz), tourist_contact: relayEmail({ role: 'tourist', id: b.tourist_uid }) })) });
+      return J({ bookings: rows.results.map(b => ({ ...b, start_utc: zonedToUtc(b.day, b.slot, b.tz), tourist_contact: relayEmail({ role: 'tourist', id: b.tourist_uid }),
+        tourist_name: ['accepted', 'in_progress', 'completed'].includes(b.status) ? b.tourist_name : shortName(b.tourist_name) })) });
     }
     if (route.startsWith('POST /bookings/:id/')) {
       const action = p[2];
@@ -446,6 +464,109 @@ export async function onRequest({ request: req, env, params }) {
       }
       return J({ iceServers: ice });
     }
+    // ---------- trip requests (tourists post plans, guides send offers) ----------
+    const STR = (v, n = 500) => String(v ?? '').trim().slice(0, n);
+    const reqBody = b => ({ city: STR(b.city, 80), country: STR(b.country, 60), start_date: STR(b.start_date, 10), end_date: STR(b.end_date, 10), flexible: b.flexible ? 1 : 0,
+      adults: Math.max(1, Math.min(50, +b.adults || 1)), children: Math.max(0, Math.min(50, +b.children || 0)), budget: +b.budget || null, currency: /^[A-Z]{3}$/.test(b.currency) ? b.currency : 'USD',
+      interests: JSON.stringify((b.interests || []).slice(0, 15).map(x => STR(x, 40))), languages: JSON.stringify((b.languages || []).slice(0, 10).map(x => STR(x, 40))),
+      guide_gender: STR(b.guide_gender, 10), student_ok: b.student_ok === 0 || b.student_ok === false ? 0 : 1, tour_style: STR(b.tour_style, 30), pace: STR(b.pace, 20), hours_per_day: +b.hours_per_day || null,
+      meeting_place: STR(b.meeting_place, 200), accommodation: STR(b.accommodation, 300), accommodation_help: b.accommodation_help ? 1 : 0, transport: STR(b.transport, 200),
+      requirements: STR(b.requirements, 1000), dietary: STR(b.dietary, 300), notes: STR(b.notes, 2000) });
+    if (route === 'POST /requests' || route === 'PUT /requests/:id') {
+      if (u.role !== 'tourist') return err('Switch to Tourist mode to post a trip plan');
+      const d = reqBody(body);
+      if (!d.city || !d.country || !d.start_date) return err('Destination city, country and start date are required');
+      if (d.end_date && d.end_date < d.start_date) return err('End date must be after the start date');
+      const cols = Object.keys(d);
+      if (M === 'POST') {
+        const open = await env.DB.prepare("SELECT COUNT(*) n FROM trip_requests WHERE tourist_id=? AND status='open'").bind(u.id).first();
+        if (open.n >= 10) return err('You can have up to 10 open trip plans');
+        const r = await env.DB.prepare(`INSERT INTO trip_requests(tourist_id,${cols}) VALUES(?,${cols.map(() => '?')})`).bind(u.id, ...Object.values(d)).run();
+        return J({ id: r.meta.last_row_id });
+      }
+      const r = await env.DB.prepare(`UPDATE trip_requests SET ${cols.map(c => c + '=?')} WHERE id=? AND tourist_id=?`).bind(...Object.values(d), id, u.id).run();
+      return r.meta.changes ? J({ ok: 1 }) : err('Not found', 404);
+    }
+    if (route === 'POST /requests/:id/close') {
+      await env.DB.prepare("UPDATE trip_requests SET status=? WHERE id=? AND tourist_id=?").bind(body.reopen ? 'open' : 'closed', id, u.id).run();
+      return J({ ok: 1 });
+    }
+    if (route === 'GET /my-requests') {
+      const rows = (await env.DB.prepare(`SELECT r.*, u.name tourist_name, (SELECT COUNT(*) FROM offers o WHERE o.request_id=r.id) offers FROM trip_requests r JOIN users u ON u.id=r.tourist_id WHERE r.tourist_id=? ORDER BY r.id DESC`).bind(u.id).all()).results;
+      const offers = (await env.DB.prepare(`SELECT o.*, gu.name guide_name, g.photo, g.rating, g.reviews, g.location, g.country g_country, g.languages, g.verified, g.is_student, g.school, g.tz g_tz
+        FROM offers o JOIN users gu ON gu.id=o.guide_id JOIN guides g ON g.user_id=o.guide_id WHERE o.request_id IN (SELECT id FROM trip_requests WHERE tourist_id=?) ORDER BY o.updated_at DESC`).bind(u.id).all()).results;
+      return J({ requests: rows.map(r => ({ ...reqFull(r), name: r.tourist_name, offers: offers.filter(o => o.request_id === r.id).map(o => ({ ...o, languages: arr(o.languages) })) })) });
+    }
+    if (route === 'GET /requests') { // guides browse
+      if (u.role !== 'guide') return err('Switch to Tourguide mode to see tourist requests');
+      const q = url.searchParams, w = ["r.status='open'", "(r.end_date IS NULL OR r.end_date='' OR r.end_date>=date('now'))"], b = [];
+      if (q.get('country')) { w.push('r.country=?'); b.push(q.get('country')); }
+      if (q.get('place')) { w.push('(r.city LIKE ? OR r.country LIKE ?)'); b.push(`%${q.get('place')}%`, `%${q.get('place')}%`); }
+      const rows = (await env.DB.prepare(`SELECT r.*, u.name tourist_name, u.id_status, (SELECT COUNT(*) FROM offers o WHERE o.request_id=r.id) offers,
+        (SELECT id FROM offers o WHERE o.request_id=r.id AND o.guide_id=?) my_offer FROM trip_requests r JOIN users u ON u.id=r.tourist_id WHERE ${w.join(' AND ')} ORDER BY r.start_date LIMIT 200`).bind(u.id, ...b).all()).results;
+      const g = await env.DB.prepare('SELECT verified FROM guides WHERE user_id=?').bind(u.id).first();
+      // meeting place / notes only for verified guides
+      return J({ verified: !!g?.verified, requests: rows.map(r => ({ ...(g?.verified ? reqFull(r) : reqPublic(r)), tourist_verified: r.id_status === 'verified', my_offer: r.my_offer })) });
+    }
+    if (route === 'POST /requests/:id/offer') {
+      if (u.role !== 'guide') return err('Switch to Tourguide mode to send offers');
+      const g = await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(u.id).first();
+      if (!g?.verified) return err('Your ID must be verified before you can send offers');
+      const r = await env.DB.prepare("SELECT * FROM trip_requests WHERE id=? AND status='open'").bind(id).first();
+      if (!r) return err('This request is no longer open');
+      if (r.tourist_id === u.id) return err("You can't send an offer to yourself");
+      const price = +body.price, cur = /^[A-Z]{3}$/.test(body.currency) ? body.currency : (g.currency || 'USD');
+      if (!(price > 0)) return err('Enter your price');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(body.day || '') || !/^\d{2}:\d{2}$/.test(body.slot || '')) return err('Pick a proposed date and start time');
+      const ex = await env.DB.prepare('SELECT * FROM offers WHERE request_id=? AND guide_id=?').bind(id, u.id).first();
+      if (ex && ex.status !== 'pending' && ex.status !== 'withdrawn') return err('This offer is already ' + ex.status);
+      if (ex) await env.DB.prepare("UPDATE offers SET price=?,currency=?,day=?,slot=?,hours=?,message=?,itinerary=?,status='pending',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(price, cur, body.day, body.slot, +body.hours || null, STR(body.message, 2000), STR(body.itinerary, 3000), ex.id).run();
+      else await env.DB.prepare('INSERT INTO offers(request_id,guide_id,price,currency,day,slot,hours,message,itinerary) VALUES(?,?,?,?,?,?,?,?,?)').bind(id, u.id, price, cur, body.day, body.slot, +body.hours || null, STR(body.message, 2000), STR(body.itinerary, 3000)).run();
+      await notify(env, r.tourist_id, ex ? 'A guide updated their offer' : 'New offer for your trip to ' + r.city, `A verified TourGuyed guide ${ex ? 'updated their' : 'sent you an'} offer for ${r.city}: ${money(price, cur)}. Open My Trip Plans to review it.`);
+      return J({ ok: 1 });
+    }
+    if (route === 'GET /my-offers') {
+      const rows = (await env.DB.prepare(`SELECT o.*, r.city, r.country, r.start_date, r.end_date, r.adults, r.children, r.status req_status, u.name tourist_name, g.tz g_tz
+        FROM offers o JOIN guides g ON g.user_id=o.guide_id JOIN trip_requests r ON r.id=o.request_id JOIN users u ON u.id=r.tourist_id WHERE o.guide_id=? ORDER BY o.updated_at DESC`).bind(u.id).all()).results;
+      return J({ offers: rows.map(o => ({ ...o, tourist_name: o.status === 'accepted' ? o.tourist_name : shortName(o.tourist_name) })) });
+    }
+    if (route.startsWith('GET /offers/:id') || route.startsWith('POST /offers/:id/')) {
+      const o = await env.DB.prepare('SELECT o.*, r.tourist_id, r.city, r.status req_status FROM offers o JOIN trip_requests r ON r.id=o.request_id WHERE o.id=?').bind(id).first();
+      if (!o || (o.guide_id !== u.id && o.tourist_id !== u.id)) return err('Not found', 404);
+      const isG = o.guide_id === u.id, other = isG ? o.tourist_id : o.guide_id, action = p[2];
+      if (M === 'GET') {
+        const m = (await env.DB.prepare('SELECT sender_id,body,price,created_at FROM offer_msgs WHERE offer_id=? ORDER BY id').bind(id).all()).results;
+        return J({ offer: o, messages: m.map(x => ({ ...x, mine: x.sender_id === u.id })) });
+      }
+      if (action === 'message') {
+        if (!['pending'].includes(o.status)) return err('This offer is closed');
+        const txt = STR(body.body, 2000), pr = +body.price || null; if (!txt && !pr) return err('Write a message');
+        await env.DB.prepare('INSERT INTO offer_msgs(offer_id,sender_id,body,price) VALUES(?,?,?,?)').bind(id, u.id, txt, pr).run();
+        if (isG && pr) await env.DB.prepare('UPDATE offers SET price=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(pr, id).run();
+        await notify(env, other, 'New message about a TourGuyed offer', pr ? `New proposed price: ${money(pr, o.currency)}. ${txt}` : txt.slice(0, 300));
+        return J({ ok: 1 });
+      }
+      if (action === 'withdraw' && isG && o.status === 'pending') { await env.DB.prepare("UPDATE offers SET status='withdrawn' WHERE id=?").bind(id).run(); return J({ ok: 1 }); }
+      if (action === 'decline' && !isG && o.status === 'pending') {
+        await env.DB.prepare("UPDATE offers SET status='declined' WHERE id=?").bind(id).run();
+        await notify(env, o.guide_id, 'Offer declined', `The traveler going to ${o.city} declined your offer.`); return J({ ok: 1 });
+      }
+      if (action === 'accept' && !isG && o.status === 'pending') {
+        const g = await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(o.guide_id).first();
+        const pm = body.pay_method === 'online' && (o.currency || 'PHP') === 'PHP' && env.PAYMONGO_SECRET_KEY ? 'online' : 'cash';
+        const r = await env.DB.prepare(`INSERT INTO bookings(tourist_id,guide_id,day,slot,timeline,pay_method,amount,platform_fee,payout_status,currency,tz,pay_currency,pay_amount,status)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'accepted')`).bind(u.id, o.guide_id, o.day, o.slot, (o.itinerary || o.message || '').slice(0, 1000), pm, o.price, +(o.price * FEE).toFixed(2),
+          pm === 'cash' ? 'cash_due' : 'unpaid', o.currency, g?.tz || 'UTC', o.currency, o.price).run();
+        await env.DB.batch([env.DB.prepare("UPDATE offers SET status='accepted', booking_id=? WHERE id=?").bind(r.meta.last_row_id, id),
+          env.DB.prepare("UPDATE trip_requests SET status='matched' WHERE id=?").bind(o.request_id),
+          env.DB.prepare("UPDATE offers SET status='closed' WHERE request_id=? AND id!=? AND status='pending'").bind(o.request_id, id),
+          env.DB.prepare('UPDATE guides SET accepted=accepted+1 WHERE user_id=?').bind(o.guide_id)]);
+        await notify(env, o.guide_id, '🎉 Your offer was accepted!', `Your offer for ${o.city} on ${o.day} ${o.slot} is now a confirmed booking. Open Bookings to chat with your traveler.`);
+        return J({ ok: 1, booking_id: r.meta.last_row_id });
+      }
+      return err('Action not allowed');
+    }
+
     if (route === 'POST /reviews' && u.role === 'tourist') {
       const b = await env.DB.prepare("SELECT * FROM bookings WHERE id=? AND tourist_id=? AND status='completed'").bind(body.booking_id, u.id).first();
       if (!b) return err('You can only rate completed tours');
@@ -478,7 +599,7 @@ export async function onRequest({ request: req, env, params }) {
           users: await one("SELECT COUNT(*) n FROM users WHERE role!='admin'"), guides: await one("SELECT COUNT(*) n FROM users WHERE role='guide'"),
           tourists: await one("SELECT COUNT(*) n FROM users WHERE role='tourist'"), pending_ids: await one("SELECT COUNT(*) n FROM media WHERE kind IN('id','school') AND status='pending'"),
           pending_media: await one("SELECT COUNT(*) n FROM media WHERE kind IN('photo','video') AND status='pending'"), open_tickets: await one("SELECT COUNT(*) n FROM tickets WHERE status='open'"),
-          bookings: await one("SELECT COUNT(*) n FROM bookings"), fees_earned: await byCur("SELECT currency c, SUM(platform_fee) n FROM bookings WHERE status='completed' GROUP BY currency"),
+          bookings: await one("SELECT COUNT(*) n FROM bookings"), open_requests: await one("SELECT COUNT(*) n FROM trip_requests WHERE status='open'"), fees_earned: await byCur("SELECT currency c, SUM(platform_fee) n FROM bookings WHERE status='completed' GROUP BY currency"),
           cash_fees_due: await byCur("SELECT currency c, SUM(platform_fee) n FROM bookings WHERE status='completed' AND payout_status='cash_due' GROUP BY currency"),
           payouts_due: await byCur("SELECT currency c, SUM(CASE WHEN payout_status='released' THEN amount-platform_fee ELSE amount/2 END - guide_paid) n FROM bookings WHERE pay_method='online' AND payout_status IN('partial_released','released') GROUP BY currency"),
           online_enabled: env.PAYMONGO_SECRET_KEY ? 1 : 0, storage: env.FILES ? 'r2' : 'db', storage_used: await one('SELECT COALESCE(SUM(size),0) n FROM media')

@@ -59,8 +59,8 @@ function renderMenu() {
   const r = ME?.user.role, cur = location.hash.split('?')[0];
   const items = !ME ? [['#/start', 'Get started'], ['#/guides', 'Browse guides'], ['#/login', 'Sign in'], ['#/signup', 'Sign up']]
     : r === 'admin' ? [['#/admin', 'Overview'], ['#/admin-verify', 'Verify IDs & media'], ['#/admin-chats', 'All messages'], ['#/admin-tickets', 'Support tickets'], ['#/admin-users', 'Users'], ['#/admin-bookings', 'Bookings & fees'], ['#/admin-payouts', 'Guide payouts']]
-    : r === 'guide' ? [['#/dashboard', 'Dashboard'], ['#/bookings', 'Bookings'], ['#/messages', 'Messages'], ['#/availability', 'Availability'], ['#/profile', 'My profile & package'], ['#/invite', 'Invite guides'], ['#/support', 'Customer service']]
-    : [['#/dashboard', 'Dashboard'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID'], ['#/support', 'Customer service']];
+    : r === 'guide' ? [['#/dashboard', 'Dashboard'], ['#/requests', '🧳 Tourist requests'], ['#/offers', 'My offers'], ['#/bookings', 'Bookings'], ['#/messages', 'Messages'], ['#/availability', 'Availability'], ['#/profile', 'My profile & package'], ['#/invite', 'Invite guides'], ['#/support', 'Customer service']]
+    : [['#/dashboard', 'Dashboard'], ['#/plans', '🗺 My trip plans'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID'], ['#/support', 'Customer service']];
   const mode = r === 'guide' ? `<div class="mode guide"><small>You're in</small><b>🧭 Tourguide mode</b><button class="switch" data-to="tourist">Switch to Tourist mode →</button></div>`
     : r === 'tourist' ? `<div class="mode tourist"><small>You're in</small><b>🎒 Tourist mode</b><button class="switch" data-to="guide">${ME.user.has_guide ? 'Switch to Tourguide mode →' : 'Become a tourguide →'}</button></div>`
     : r === 'admin' ? `<div class="mode admin"><small>You're in</small><b>🛡 Admin</b></div>` : '';
@@ -92,7 +92,8 @@ const views = {
         <label>Preferred language</label><input id="language" placeholder="e.g. English">
         <label>Would you like a student to be your tourguide?</label><select id="student"><option value="">Either</option><option value="yes">Yes</option><option value="no">No</option></select>
         <p class="muted" style="font-size:13px;margin-top:6px">Student guides are limited to their school campus and approved areas.</p>
-        <button class="btn" style="margin-top:16px" id="go">Show tourguides</button>`
+        <button class="btn" style="margin-top:16px" id="go">Show tourguides</button>
+        <p class="muted" style="margin-top:14px">Prefer guides to come to you? <a href="#/plan">Post your trip plan</a> and get offers.</p>`
         : role === 'guide' ? `<p>Create your guide account, then set up the places you're expert in, your languages, transport, package and verification documents.</p>
         <a class="btn" style="margin-top:14px" href="#/signup?role=guide${q.ref ? '&ref=' + esc(q.ref) : ''}">Sign up as a tourguide</a>` : '<p class="muted">Pick one to continue.</p>'}</div>`;
       document.querySelectorAll('.choice').forEach(c => c.onclick = () => { role = c.dataset.r; draw(); });
@@ -182,6 +183,8 @@ const views = {
        <div class="stat"><b>${ME.guide.acceptance}%</b>Acceptance rate</div><div class="stat"><b>${peso(earned, ME.guide.currency)}</b>Earned (after 20%)</div>`
       : `<div class="stat"><b>${up.length}</b>Upcoming tours</div><div class="stat"><b>${done.length}</b>Completed</div><div class="stat"><b>${ME.user.id_status}</b>ID status</div><div class="stat"><b>${new Set(b.map(x => x.guide_id)).size}</b>Guides used</div>`}</div>
      ${isG && feeDue ? `<div class="panel">💵 Cash tours: you owe the platform <b>${peso(feeDue, ME.guide.currency)}</b> (20%). Mark each as paid in Bookings.</div>` : ''}
+     ${isG ? '<div class="panel cta-row"><div><b>🧳 Travelers are looking for guides</b><br><span class="muted">Browse tourist trip plans and send your offer.</span></div><a class="btn" href="#/requests">See tourist requests</a></div>'
+       : '<div class="panel cta-row"><div><b>🗺 Planning a trip?</b><br><span class="muted">Post your plan and let local guides send you offers.</span></div><a class="btn" href="#/plan">＋ Add a trip plan</a></div>'}
      <h2 style="font-size:28px;margin:10px 0">Upcoming</h2>${bookingTable(up)}`;
     document.querySelectorAll('.switch2').forEach(b => b.onclick = () => switchRole(b.dataset.to));
     wireBookingActions();
@@ -352,6 +355,112 @@ const views = {
     V().innerHTML = `<h1>Customer service</h1><div class="panel" style="max-width:560px"><label>Subject</label><input id="s" placeholder="e.g. Guide was late"><label>Details</label><textarea id="d" rows="6"></textarea><button class="btn" style="margin-top:12px" id="b">Send complaint</button></div>`;
     $('#b').onclick = async () => { await api('/support', { method: 'POST', body: { subject: $('#s').value, body: $('#d').value } }); toast('Sent — our team will reply by email'); $('#d').value = ''; };
   },
+
+  // ---------- trip plans (tourist) ----------
+  async plans() {
+    if (!need('tourist')) return;
+    const { requests } = await api('/my-requests'), mc = myCurrency();
+    const st = { open: ['Open — guides can send offers', 's-requested'], matched: ['Booked ✓', 's-completed'], closed: ['Closed', 's-declined'] };
+    V().innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><h1>My trip plans</h1><a class="btn" href="#/plan">＋ Add a trip plan</a></div>
+      <p class="muted" style="margin:-8px 0 18px">Tell local guides where you're going and what you want. Verified guides send you offers — compare, chat, negotiate, and accept the one you like.</p>
+      ${requests.map(r => `<div class="panel plan">
+        <div class="plan-head"><div><h3>📍 ${esc(r.city)}, ${esc(r.country)}</h3><p class="muted">${esc(r.start_date)}${r.end_date ? ' → ' + esc(r.end_date) : ''}${r.flexible ? ' · flexible' : ''} · ${r.adults} adult${r.adults > 1 ? 's' : ''}${r.children ? ', ' + r.children + ' child' + (r.children > 1 ? 'ren' : '') : ''}${r.budget ? ' · budget ' + peso(r.budget, r.currency) : ''}</p></div>
+          <span class="status ${(st[r.status] || [])[1]}">${(st[r.status] || [r.status])[0]}</span></div>
+        <p>${tags(r.interests)} ${tags(r.languages)}</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0"><a class="btn sm ghost" href="#/plan?id=${r.id}">Edit</a><button class="btn sm ghost" data-close="${r.id}" data-re="${r.status !== 'open' ? 1 : ''}">${r.status === 'open' ? 'Close plan' : 'Reopen'}</button></div>
+        <h4 style="margin-top:12px;color:var(--mint)">Offers (${r.offers.length})</h4>
+        ${r.offers.map(o => `<div class="offer ${o.status}">
+          <img src="${esc(o.photo || '/icon-192.png')}" alt="">
+          <div style="flex:1;min-width:200px"><a href="#/guide/${o.guide_id}"><b>${esc(o.guide_name)}</b></a> ${o.verified ? '<span class="tag fill">✓ Verified</span>' : ''}<br>
+            <small class="muted">★ ${o.rating} (${o.reviews}) · ${esc(o.location || '')}${o.g_country ? ', ' + esc(o.g_country) : ''} · ${tags(o.languages)}</small>
+            <p style="margin-top:6px"><b style="font-size:20px;color:var(--mint)">${peso(o.price, o.currency)}</b> <small class="muted" data-cv="${o.price}|${o.currency}"></small>${o.hours ? ` · ${o.hours} hrs` : ''}<br>
+            <small>🕒 ${fmtWhen(o.day && zoned(o.day, o.slot, o.g_tz))} <span class="muted">(your time)</span></small></p>
+            ${o.message ? `<p class="muted" style="white-space:pre-wrap">${esc(o.message)}</p>` : ''}${o.itinerary ? `<details><summary>Proposed itinerary</summary><p style="white-space:pre-wrap">${esc(o.itinerary)}</p></details>` : ''}</div>
+          <div class="offer-act"><span class="status s-${o.status === 'pending' ? 'requested' : o.status === 'accepted' ? 'completed' : 'declined'}">${o.status}</span>
+            ${o.status === 'pending' ? `<button class="btn sm" data-acc="${o.id}" data-cur="${o.currency}">Accept</button><button class="btn sm ghost" data-thr="${o.id}">💬 Chat / negotiate</button><button class="btn sm ghost" data-dec="${o.id}">Decline</button>` : o.status === 'accepted' ? '<a class="btn sm" href="#/bookings">Go to booking</a>' : ''}</div></div>`).join('') || '<p class="muted">No offers yet — guides in this area will be notified when they browse requests.</p>'}
+      </div>`).join('') || `<div class="panel" style="text-align:center;padding:40px"><p style="font-size:40px">🗺</p><h3>No trip plans yet</h3><p class="muted" style="margin:8px 0 16px">Going to Hawaii, Kyoto or Lisbon? Post your plan and let local guides come to you.</p><a class="btn" href="#/plan">＋ Add your first trip plan</a></div>`}`;
+    document.querySelectorAll('[data-cv]').forEach(async el => { const [n, c] = el.dataset.cv.split('|'); const v = await approx(+n, c, mc); if (v) el.textContent = `≈ ${peso(v, mc)}`; });
+    document.querySelectorAll('[data-close]').forEach(b => b.onclick = async () => { await api(`/requests/${b.dataset.close}/close`, { method: 'POST', body: { reopen: !!b.dataset.re } }); route(); });
+    document.querySelectorAll('[data-thr]').forEach(b => b.onclick = () => offerThread(+b.dataset.thr));
+    document.querySelectorAll('[data-dec]').forEach(b => b.onclick = async () => { if (!confirm('Decline this offer?')) return; await api(`/offers/${b.dataset.dec}/decline`, { method: 'POST' }); toast('Offer declined'); route(); });
+    document.querySelectorAll('[data-acc]').forEach(b => b.onclick = () => {
+      modal(`<h3>Accept this offer?</h3><p class="muted">This creates a confirmed booking with this guide. Other offers for this trip will close. You'll both see each other's full name and can chat and video call.</p>
+        <label>Payment</label><select id="apm"><option value="cash">Cash to guide (${esc(b.dataset.cur)})</option>${b.dataset.cur === 'PHP' ? '<option value="online">Pay online — card, GCash, Maya (held safely)</option>' : ''}</select>
+        <button class="btn" style="margin-top:14px" id="aok">Accept & book</button>`);
+      $('#aok').onclick = async () => { try { await api(`/offers/${b.dataset.acc}/accept`, { method: 'POST', body: { pay_method: $('#apm').value } }); closeModal(); toast('🎉 Booked! Chat with your guide in Bookings.'); location.hash = '#/bookings'; } catch (e) { toast(e.message) } };
+    });
+  },
+  async plan() {
+    if (!need('tourist')) return;
+    const id = +qs().id, r = id ? (await api('/my-requests')).requests.find(x => x.id === id) || {} : {}, R = '<span class="req">*</span>';
+    const L = a => (a || []).join(', '), today = new Date().toISOString().slice(0, 10);
+    const opt = (id, vals, cur) => `<select id="${id}">${vals.map(([v, t]) => `<option value="${v}" ${String(cur ?? '') === String(v) ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+    V().innerHTML = `<h1>${id ? 'Edit trip plan' : 'Add a trip plan'}</h1><div class="panel"><p class="muted" style="margin-bottom:8px">Fields marked ${R} are required. Your meeting place, notes and requirements are only shown to signed-in, ID-verified guides — never publicly. Guides see your first name and last initial until you confirm a booking.</p>
+      <h3 class="fs">📍 Where & when</h3><div class="two" style="gap:14px">
+        <div><label>Destination city ${R}</label><input id="city" required value="${esc(r.city || '')}" placeholder="e.g. Honolulu"></div>
+        <div><label>Country ${R}</label><input id="country" list="countries" required value="${esc(r.country || '')}" placeholder="e.g. United States"><datalist id="countries">${COUNTRIES.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+        <div><label>Start date ${R}</label><input id="start_date" type="date" min="${today}" required value="${esc(r.start_date || '')}"></div>
+        <div><label>End date</label><input id="end_date" type="date" min="${today}" value="${esc(r.end_date || '')}"></div></div>
+      <label style="font-weight:400"><input type="checkbox" id="flexible" ${r.flexible ? 'checked' : ''}> My dates are flexible</label>
+      <h3 class="fs">👥 Who's going</h3><div class="two" style="gap:14px;grid-template-columns:repeat(4,1fr)">
+        <div><label>Adults ${R}</label><input id="adults" type="number" min="1" value="${r.adults || 1}"></div><div><label>Children</label><input id="children" type="number" min="0" value="${r.children || 0}"></div>
+        <div><label>Preferred guide</label>${opt('guide_gender', [['', 'Any'], ['Female', 'Female'], ['Male', 'Male']], r.guide_gender)}</div>
+        <div><label>Student guides OK?</label>${opt('student_ok', [[1, 'Yes'], [0, 'No']], r.student_ok ?? 1)}</div></div>
+      <h3 class="fs">🎯 What you want</h3><div class="two" style="gap:14px">
+        <div><label>Interests <small class="muted">(comma separated)</small></label><input id="interests" value="${esc(L(r.interests))}" placeholder="e.g. Beaches, Hiking, Food, History"></div>
+        <div><label>Languages you speak</label><input id="languages" value="${esc(L(r.languages))}" placeholder="e.g. English, Spanish"></div>
+        <div><label>Tour style</label>${opt('tour_style', [['', 'No preference'], ['Private', 'Private — just us'], ['Small group', 'Small group'], ['Family-friendly', 'Family-friendly'], ['Adventure', 'Adventure'], ['Luxury', 'Luxury'], ['Budget', 'Budget-friendly']], r.tour_style)}</div>
+        <div><label>Pace</label>${opt('pace', [['', 'No preference'], ['Relaxed', 'Relaxed'], ['Moderate', 'Moderate'], ['Packed', 'See as much as possible']], r.pace)}</div>
+        <div><label>Hours of guiding per day</label><input id="hours_per_day" type="number" min="1" max="16" value="${r.hours_per_day || ''}" placeholder="e.g. 4"></div>
+        <div><label>Budget for the guide <small class="muted">(total)</small></label><div style="display:flex;gap:8px"><select id="currency" style="max-width:110px">${CURRENCIES.map(c => `<option ${(r.currency || myCurrency()) === c ? 'selected' : ''}>${c}</option>`).join('')}</select><input id="budget" type="number" min="0" value="${r.budget || ''}" placeholder="e.g. 200"></div></div></div>
+      <h3 class="fs">🏨 Logistics</h3><div class="two" style="gap:14px">
+        <div><label>Preferred meeting place</label><input id="meeting_place" value="${esc(r.meeting_place || '')}" placeholder="e.g. my hotel lobby in Waikiki, the airport, a landmark"></div>
+        <div><label>How will you get around?</label>${opt('transport', [['', 'Guide can suggest'], ['Guide provides car', 'Guide provides a car/van'], ['Public transport', 'Public transport'], ['Walking', 'Walking'], ['Rental car', 'I have a rental car'], ['Taxi/ride-hailing', 'Taxi / ride-hailing']], r.transport)}</div>
+        <div><label>Where are you staying?</label><input id="accommodation" value="${esc(r.accommodation || '')}" placeholder="e.g. Hilton Hawaiian Village / not booked yet"></div>
+        <div><label style="margin-top:34px;font-weight:400"><input type="checkbox" id="accommodation_help" ${r.accommodation_help ? 'checked' : ''}> I'd like help finding accommodation</label></div></div>
+      <h3 class="fs">📝 Requirements & notes</h3>
+      <label>Special requirements <small class="muted">(accessibility, mobility, kids' ages, safety needs…)</small></label><textarea id="requirements" rows="2">${esc(r.requirements || '')}</textarea>
+      <label>Dietary needs</label><input id="dietary" value="${esc(r.dietary || '')}" placeholder="e.g. vegetarian, halal, no seafood">
+      <label>Anything else guides should know?</label><textarea id="notes" rows="3" placeholder="e.g. It's our honeymoon — we'd love a sunset spot and a local seafood dinner.">${esc(r.notes || '')}</textarea>
+      <button class="btn" style="margin-top:16px" id="sv">${id ? 'Save changes' : 'Post my trip plan'}</button></div>`;
+    $('#sv').onclick = async () => {
+      const v = k => $('#' + k).value, list = k => v(k).split(',').map(x => x.trim()).filter(Boolean);
+      const bad = ['city', 'country', 'start_date'].filter(k => !v(k).trim()); document.querySelectorAll('.invalid').forEach(e => e.classList.remove('invalid')); bad.forEach(k => $('#' + k).classList.add('invalid'));
+      if (bad.length) return toast('Please fill in the fields marked in red');
+      const body = { city: v('city'), country: v('country'), start_date: v('start_date'), end_date: v('end_date'), flexible: $('#flexible').checked, adults: +v('adults'), children: +v('children'),
+        guide_gender: v('guide_gender'), student_ok: +v('student_ok'), interests: list('interests'), languages: list('languages'), tour_style: v('tour_style'), pace: v('pace'), hours_per_day: +v('hours_per_day'),
+        currency: v('currency'), budget: +v('budget'), meeting_place: v('meeting_place'), transport: v('transport'), accommodation: v('accommodation'), accommodation_help: $('#accommodation_help').checked,
+        requirements: v('requirements'), dietary: v('dietary'), notes: v('notes') };
+      try { await api(id ? '/requests/' + id : '/requests', { method: id ? 'PUT' : 'POST', body }); toast(id ? 'Trip plan updated' : '✓ Posted! Local guides can now send you offers.'); location.hash = '#/plans'; } catch (e) { toast(e.message) }
+    };
+  },
+  // ---------- tourist requests (guide) ----------
+  async requests() {
+    if (!need('guide')) return;
+    const q = qs(), d = await api('/requests?' + new URLSearchParams(q)), mc = myCurrency();
+    V().innerHTML = `<h1>Tourist requests</h1><p class="muted" style="margin:-8px 0 16px">Travelers looking for a local guide. Send an offer with your price and plan — they can chat with you before accepting.</p>
+      ${d.verified ? '' : '<div class="panel">⏳ You can browse requests now. To send offers and see meeting places & notes, your ID must be verified — upload it in <a href="#/profile">My profile</a>.</div>'}
+      <div class="panel" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div style="flex:1;min-width:180px"><label>Destination (city or country)</label><input id="place" value="${esc(q.place || '')}" placeholder="e.g. ${esc(ME.guide?.location || 'Honolulu')}"></div><button class="btn" id="f">Search</button>${q.place ? '<a class="btn ghost" href="#/requests">Show all</a>' : ''}</div>
+      <p class="muted" style="margin-bottom:12px">${d.requests.length} open request(s)</p>
+      <div class="grid3 reqs">${d.requests.map(r => reqCard(r, true)).join('') || '<p class="muted">No open requests here yet. Check back soon!</p>'}</div>`;
+    $('#f').onclick = () => { location.hash = '#/requests?' + new URLSearchParams($('#place').value ? { place: $('#place').value } : {}); };
+    document.querySelectorAll('[data-more]').forEach(b => b.onclick = () => { const r = d.requests.find(x => x.id === +b.dataset.more); modal(reqDetail(r) + (d.verified ? `<button class="btn" style="margin-top:14px" onclick="closeModal();offerForm(${r.id})">${r.my_offer ? 'Update my offer' : 'Send an offer'}</button>` : '')); });
+    document.querySelectorAll('[data-offer]').forEach(b => b.onclick = () => offerForm(+b.dataset.offer, d.requests.find(x => x.id === +b.dataset.offer)));
+  },
+  async offers() {
+    if (!need('guide')) return;
+    const { offers } = await api('/my-offers');
+    V().innerHTML = `<h1>My offers</h1>${offers.length ? `<table><tr><th>Traveler & trip</th><th>Your offer</th><th>Proposed</th><th>Status</th><th></th></tr>${offers.map(o => `<tr>
+      <td><b>${esc(o.tourist_name)}</b><br><small class="muted">📍 ${esc(o.city)}, ${esc(o.country)} · ${esc(o.start_date)} · ${o.adults + (o.children || 0)} people</small></td>
+      <td>${peso(o.price, o.currency)}${o.hours ? `<br><small class="muted">${o.hours} hrs</small>` : ''}</td><td>${fmtWhen(zoned(o.day, o.slot, o.g_tz), o.g_tz)}<br><small class="muted">your time</small></td>
+      <td><span class="status s-${o.status === 'pending' ? 'requested' : o.status === 'accepted' ? 'completed' : 'declined'}">${o.status}</span></td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">${o.status === 'pending' ? `<button class="btn sm ghost" data-thr="${o.id}">💬 Chat</button><button class="btn sm ghost" data-edit="${o.request_id}">Edit</button><button class="btn sm ghost" data-wd="${o.id}">Withdraw</button>` : o.status === 'accepted' ? '<a class="btn sm" href="#/bookings">Booking</a>' : ''}</td></tr>`).join('')}</table>`
+      : '<div class="panel">You haven\'t sent any offers yet. <a href="#/requests">Browse tourist requests →</a></div>'}`;
+    document.querySelectorAll('[data-thr]').forEach(b => b.onclick = () => offerThread(+b.dataset.thr));
+    document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => offerForm(+b.dataset.edit, null, offers.find(o => o.request_id === +b.dataset.edit)));
+    document.querySelectorAll('[data-wd]').forEach(b => b.onclick = async () => { if (!confirm('Withdraw this offer?')) return; await api(`/offers/${b.dataset.wd}/withdraw`, { method: 'POST' }); route(); });
+  },
+
   // ---------- admin ----------
   async admin() {
     if (!need('admin')) return; const o = await api('/admin/overview');
@@ -464,7 +573,7 @@ function bookingTable(list) {
     }
     if (['accepted', 'in_progress', 'completed'].includes(b.status)) a.push(`<a class="btn sm ghost" href="#/messages?b=${b.id}">Chat</a>`, `<a class="btn sm ghost" href="#/call?b=${b.id}">📹 Video</a>`);
     const other = b.tz && b.tz !== myTz() ? `<br><small class="muted">${isG ? 'Your' : 'Guide\'s'} time${isG ? '' : ' in ' + esc(tzCity(b.tz))}: ${fmtWhen(b.start_utc, b.tz)}</small>` : '';
-    return `<tr><td><b>${fmtWhen(b.start_utc, isG ? b.tz : undefined)}</b>${isG ? '' : other}${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${esc(isG ? b.tourist_contact : b.guide_name)}</td>
+    return `<tr><td><b>${fmtWhen(b.start_utc, isG ? b.tz : undefined)}</b>${isG ? '' : other}${b.timeline ? `<br><small class="muted">${esc(b.timeline)}</small>` : ''}</td><td>${isG ? `<b>${esc(b.tourist_name)}</b><br><small class="muted">${esc(b.tourist_contact)}</small>` : esc(b.guide_name)}</td>
       <td>${peso(b.amount, b.currency)}${b.pay_currency && b.pay_currency !== b.currency ? `<br><small>💵 paid in ${b.pay_currency}: ${peso(b.pay_amount, b.pay_currency)}</small>` : ''}${isG ? `<br><small class="muted">fee ${peso(b.platform_fee, b.currency)}</small>` : ''}${b.refund ? `<br><small>refund ${peso(b.refund, b.currency)}</small>` : ''}</td><td>${b.pay_method}<br><small class="muted">${payLabel(b.payout_status)}</small></td>
       <td><span class="status s-${b.status}">${b.status.replace('_', ' ')}</span>${b.decline_reason ? `<br><small>${esc(b.decline_reason)}</small>` : ''}</td><td style="display:flex;gap:6px;flex-wrap:wrap">${a.join('')}</td></tr>`;
   }).join('')}</table>`;
@@ -484,6 +593,60 @@ function wireBookingActions() {
   });
 }
 async function submitRate(id) { try { await api('/reviews', { method: 'POST', body: { booking_id: id, stars: +$('#st').value, comment: $('#cm').value } }); closeModal(); toast('Thanks for rating!'); route(); } catch (e) { toast(e.message) } }
+
+// local date+time in a time zone → UTC ms (mirror of the server's zonedToUtc)
+function zoned(day, slot, tz) {
+  if (!day) return Date.now();
+  const guess = Date.UTC(...day.split('-').map((v, i) => i === 1 ? v - 1 : +v), ...(slot || '09:00').split(':').map(Number));
+  try { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(guess)).map(x => [x.type, x.value]));
+    return guess - (Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute) - guess); } catch { return guess; }
+}
+function reqCard(r, forGuide) {
+  const who = `${r.adults} adult${r.adults > 1 ? 's' : ''}${r.children ? ' + ' + r.children + ' kid' + (r.children > 1 ? 's' : '') : ''}`;
+  return `<div class="card req"><div class="body"><div class="req-top"><span class="avatar">${esc((r.name || '?')[0])}</span><div><b>${esc(r.name)}</b>${r.tourist_verified ? ' <span class="tag fill">✓ ID</span>' : ''}<br><small class="muted">is looking for a guide</small></div></div>
+    <h3 style="margin:10px 0 4px">📍 ${esc(r.city)}, ${esc(r.country)}</h3>
+    <p class="muted">📅 ${esc(r.start_date)}${r.end_date ? ' → ' + esc(r.end_date) : ''}${r.flexible ? ' (flexible)' : ''}<br>👥 ${who}${r.budget ? ` · 💰 ${peso(r.budget, r.currency)}` : ''}${r.tour_style ? ' · ' + esc(r.tour_style) : ''}</p>
+    <p style="margin:8px 0">${tags(r.interests)}${r.languages?.length ? ' 🗣 ' + tags(r.languages) : ''}</p>
+    <p class="muted" style="font-size:13px">${r.offers} offer${r.offers === 1 ? '' : 's'} so far</p>
+    ${forGuide ? `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn sm ghost" data-more="${r.id}">Details</button><button class="btn sm" data-offer="${r.id}">${r.my_offer ? 'Update offer' : 'Send offer'}</button></div>` : ''}</div></div>`;
+}
+function reqDetail(r) {
+  const row = (k, v) => v ? `<p><b>${k}:</b> ${esc(v)}</p>` : '';
+  return `<h3>📍 ${esc(r.city)}, ${esc(r.country)}</h3><p class="muted">${esc(r.name)} · ${esc(r.start_date)}${r.end_date ? ' → ' + esc(r.end_date) : ''}</p>
+    ${row('Group', `${r.adults} adults, ${r.children || 0} children`)}${row('Budget', r.budget ? peso(r.budget, r.currency) : '')}${row('Interests', (r.interests || []).join(', '))}${row('Languages', (r.languages || []).join(', '))}
+    ${row('Tour style', r.tour_style)}${row('Pace', r.pace)}${row('Hours per day', r.hours_per_day)}${row('Preferred guide', r.guide_gender)}${row('Student guides OK', r.student_ok ? 'Yes' : 'No')}
+    ${'meeting_place' in r ? row('Meeting place', r.meeting_place) + row('Staying at', r.accommodation) + (r.accommodation_help ? '<p>🏨 Would like help finding accommodation</p>' : '') + row('Getting around', r.transport) + row('Requirements', r.requirements) + row('Dietary', r.dietary) + row('Notes', r.notes)
+      : '<p class="muted">🔒 Meeting place, notes and requirements are visible to ID-verified guides.</p>'}`;
+}
+function offerForm(rid, r, ex) {
+  const g = ME.guide || {}, today = new Date().toISOString().slice(0, 10);
+  modal(`<h3>${ex ? 'Update your offer' : 'Send an offer'}${r ? ` — ${esc(r.city)}` : ''}</h3>
+    ${r?.budget ? `<p class="muted">Traveler's budget: ${peso(r.budget, r.currency)}</p>` : ''}
+    <div class="two" style="gap:10px;grid-template-columns:1fr 1fr"><div><label>Your price ${'<span class="req">*</span>'}</label><input id="op" type="number" min="1" value="${ex?.price || g.price || ''}"></div>
+      <div><label>Currency</label><select id="oc">${CURRENCIES.map(c => `<option ${(ex?.currency || g.currency || myCurrency()) === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+      <div><label>Proposed date <span class="req">*</span></label><input id="od" type="date" min="${today}" value="${ex?.day || (r?.start_date >= today ? r.start_date : '') || ''}"></div>
+      <div><label>Start time <small class="muted">(your time)</small> <span class="req">*</span></label><input id="ot" type="time" value="${ex?.slot || '09:00'}"></div>
+      <div><label>Hours</label><input id="oh" type="number" min="1" value="${ex?.hours || g.duration_hours || ''}"></div></div>
+    <label>Message to the traveler</label><textarea id="om" rows="3" placeholder="Hi! I'm a local guide in ${esc(g.location || 'the area')}. I'd love to show you…">${esc(ex?.message || '')}</textarea>
+    <label>Proposed itinerary</label><textarea id="oi" rows="4" placeholder="9:00 pick-up at your hotel → 10:00 … → 13:00 lunch at …">${esc(ex?.itinerary || '')}</textarea>
+    <button class="btn" style="margin-top:12px" id="os">${ex ? 'Update offer' : 'Send offer'}</button>`);
+  $('#os').onclick = async () => {
+    try { await api(`/requests/${rid}/offer`, { method: 'POST', body: { price: +$('#op').value, currency: $('#oc').value, day: $('#od').value, slot: $('#ot').value, hours: +$('#oh').value, message: $('#om').value, itinerary: $('#oi').value } });
+      closeModal(); toast('✓ Offer sent! You\'ll be notified when they reply.'); location.hash = '#/offers'; route(); } catch (e) { toast(e.message) }
+  };
+}
+async function offerThread(oid) {
+  const load = async () => {
+    const { offer: o, messages } = await api('/offers/' + oid), isG = o.guide_id === ME.user.id;
+    modal(`<h3>💬 Offer chat — ${esc(o.city)}</h3><p class="muted" style="font-size:13px">Current offer: <b>${peso(o.price, o.currency)}</b>. Keep payments and contact details on TourGuyed — you're protected by our refund rules only for bookings made here.</p>
+      <div class="log" id="olog" style="max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:8px;margin:12px 0">${messages.map(m => `<div class="bubble ${m.mine ? 'me' : ''}">${m.price ? `<b>💰 Proposed price: ${peso(m.price, o.currency)}</b><br>` : ''}${esc(m.body)}</div>`).join('') || '<p class="muted">No messages yet — ask a question or propose a price.</p>'}</div>
+      ${o.status === 'pending' ? `<textarea id="otx" rows="2" placeholder="Write a message…"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap"><label style="margin:0">${isG ? 'Update price' : 'Propose a price'} (optional)</label><input id="opr" type="number" min="1" style="max-width:140px"><button class="btn" id="osd">Send</button></div>` : `<p class="muted">This offer is ${o.status}.</p>`}`);
+    $('#olog').scrollTop = 1e9;
+    $('#osd') && ($('#osd').onclick = async () => { try { await api(`/offers/${oid}/message`, { method: 'POST', body: { body: $('#otx').value, price: +$('#opr').value || null } }); await load(); } catch (e) { toast(e.message) } });
+  };
+  await load();
+}
 
 async function bookFlow(g) {
   if (!ME) return location.hash = '#/signup';
