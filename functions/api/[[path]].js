@@ -166,6 +166,7 @@ async function migrate(env) {
     `CREATE TABLE IF NOT EXISTS offers(id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER NOT NULL, guide_id INTEGER NOT NULL, price REAL, currency TEXT, day TEXT, slot TEXT, hours REAL,
       message TEXT, itinerary TEXT, status TEXT DEFAULT 'pending', booking_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(request_id, guide_id))`,
     `CREATE TABLE IF NOT EXISTS offer_msgs(id INTEGER PRIMARY KEY AUTOINCREMENT, offer_id INTEGER, sender_id INTEGER, body TEXT, price REAL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)`,
+    "CREATE TABLE IF NOT EXISTS admin_msgs(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, from_admin INTEGER DEFAULT 1, body TEXT, seen INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS signals(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER, sender_id INTEGER, type TEXT, data TEXT, created INTEGER)"];
   for (const q of stmts) await env.DB.prepare(q).run().catch(() => {}); // ignore 'duplicate column'
 }
@@ -288,7 +289,8 @@ export async function onRequest({ request: req, env, params }) {
 
     if (route === 'GET /me') {
       const g0 = await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(u.id).first(); const g = u.role === 'guide' ? g0 : null;
-      return J({ user: { id: u.id, role: u.role, name: u.name, email: u.email, id_status: u.id_status, relay: relayEmail(u), has_guide: !!g0, storage: env.FILES ? 'r2' : 'db' }, guide: g && { ...shapeGuide(g), wise_email: g.wise_email } });
+      const ib = await env.DB.prepare('SELECT COUNT(*) n, SUM(from_admin=1 AND seen=0) unread FROM admin_msgs WHERE user_id=?').bind(u.id).first().catch(() => null);
+      return J({ user: { inbox: ib?.n || 0, inbox_unread: ib?.unread || 0, id: u.id, role: u.role, name: u.name, email: u.email, id_status: u.id_status, relay: relayEmail(u), has_guide: !!g0, storage: env.FILES ? 'r2' : 'db' }, guide: g && { ...shapeGuide(g), wise_email: g.wise_email } });
     }
     if (route === 'GET /my-media') return J({ items: (await env.DB.prepare("SELECT id,kind,status,created_at FROM media WHERE user_id=? AND kind IN('photo','video') ORDER BY id DESC").bind(u.id).all()).results });
     if (route === 'GET /my-media/:id') { const m = await env.DB.prepare('SELECT * FROM media WHERE id=? AND user_id=?').bind(id, u.id).first(); return m ? serveFile(env, m, req) : err('Not found', 404); }
@@ -305,6 +307,16 @@ export async function onRequest({ request: req, env, params }) {
       if (name.length < 2 || name.length > 80) return err('Name must be 2–80 characters');
       await env.DB.prepare('UPDATE users SET name=? WHERE id=?').bind(name, u.id).run();
       return J({ ok: 1, name });
+    }
+    if (route === 'GET /inbox') {
+      const items = await env.DB.prepare('SELECT body,from_admin,created_at FROM admin_msgs WHERE user_id=? ORDER BY id').bind(u.id).all();
+      await env.DB.prepare('UPDATE admin_msgs SET seen=1 WHERE user_id=? AND from_admin=1').bind(u.id).run();
+      return J({ items: items.results });
+    }
+    if (route === 'POST /inbox') {
+      const t = String(body.body || '').trim().slice(0, 4000); if (!t) return err('Write a message');
+      await env.DB.prepare('INSERT INTO admin_msgs(user_id,from_admin,body) VALUES(?,0,?)').bind(u.id, t).run();
+      return J({ ok: 1 });
     }
     if ((route === 'POST /switch-role' || route === 'POST /become-guide') && u.role !== 'admin') {
       const to = route === 'POST /become-guide' ? 'guide' : body.to;
@@ -640,9 +652,60 @@ export async function onRequest({ request: req, env, params }) {
         if (body.reply && t) await notify(env, t.user_id, 'Re: ' + t.subject, body.reply);
         return J({ ok: 1 });
       }
-      if (route === 'GET /admin/users') return J({ items: await all(`SELECT u.id,u.role,u.name,u.email,u.id_status,u.created_at,g.verified,g.rating,g.reviews FROM users u LEFT JOIN guides g ON g.user_id=u.id WHERE u.role!='admin' ORDER BY u.id DESC LIMIT 500`) });
+      if (route === 'GET /admin/users') return J({ items: await all(`SELECT u.id,u.role,u.name,u.email,u.id_status,u.created_at,g.verified,g.rating,g.reviews,(SELECT COUNT(*) FROM admin_msgs a WHERE a.user_id=u.id AND a.from_admin=0 AND a.seen=0) unread FROM users u LEFT JOIN guides g ON g.user_id=u.id WHERE u.role!='admin' ORDER BY u.id DESC LIMIT 500`) });
       if (route === 'GET /admin/bookings') return J({ items: (await all(`SELECT b.*,gu.name guide_name,tu.name tourist_name FROM bookings b JOIN users gu ON gu.id=b.guide_id JOIN users tu ON tu.id=b.tourist_id ORDER BY b.id DESC LIMIT 300`)).map(b => ({ ...b, start_utc: zonedToUtc(b.day, b.slot, b.tz) })) });
       if (route === 'POST /admin/media/:id/delete') { const m = await env.DB.prepare('SELECT key FROM media WHERE id=?').bind(id).first(); if (m && env.FILES) await env.FILES.delete(m.key).catch(() => {}); await env.DB.prepare('DELETE FROM media WHERE id=?').bind(id).run(); return J({ ok: 1 }); }
+      if (route === 'GET /admin/users/:id') {
+        const user = await env.DB.prepare('SELECT id,role,name,email,id_status,created_at FROM users WHERE id=?').bind(id).first(); if (!user) return err('Not found', 404);
+        const guide = await env.DB.prepare('SELECT * FROM guides WHERE user_id=?').bind(id).first();
+        return J({ user, guide });
+      }
+      if (route === 'PUT /admin/users/:id') {
+        const t = await env.DB.prepare('SELECT role FROM users WHERE id=?').bind(id).first(); if (!t) return err('Not found', 404); if (t.role === 'admin') return err('Admins can’t be edited here');
+        const name = String(body.name || '').replace(/\s+/g, ' ').trim(), email = String(body.email || '').trim().toLowerCase();
+        if (name.length < 2 || name.length > 80) return err('Name must be 2–80 characters');
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return err('Invalid email');
+        if (await env.DB.prepare('SELECT 1 FROM users WHERE email=? AND id!=?').bind(email, id).first()) return err('That email is used by another account');
+        const ids = ['none', 'pending', 'verified', 'rejected'].includes(body.id_status) ? body.id_status : null;
+        await env.DB.prepare('UPDATE users SET name=?,email=?,id_status=COALESCE(?,id_status) WHERE id=?').bind(name, email, ids, id).run();
+        if (body.guide) {
+          const g = body.guide, f = ['bio', 'gender', 'occupation', 'school', 'location', 'country', 'currency', 'tz', 'transport', 'package_title', 'wise_email', 'photo'],
+            n = ['is_student', 'school_permission', 'price', 'duration_hours', 'offers_local', 'verified'], a = ['places', 'languages', 'activities', 'includes', 'excludes'];
+          if (g.currency && !/^[A-Z]{3}$/.test(g.currency)) return err('Invalid currency'); if (g.tz && !validTz(g.tz)) return err('Invalid time zone');
+          const sets = [], vals = [];
+          for (const k of f) if (k in g) { sets.push(`${k}=?`); vals.push(String(g[k] ?? '')); }
+          for (const k of n) if (k in g) { sets.push(`${k}=?`); vals.push(+g[k] || 0); }
+          for (const k of a) if (k in g) { sets.push(`${k}=?`); vals.push(JSON.stringify(Array.isArray(g[k]) ? g[k] : [])); }
+          await env.DB.prepare('INSERT OR IGNORE INTO guides(user_id) VALUES(?)').bind(id).run();
+          if (sets.length) await env.DB.prepare(`UPDATE guides SET ${sets.join(',')} WHERE user_id=?`).bind(...vals, id).run();
+        }
+        return J({ ok: 1 });
+      }
+      if (route === 'POST /admin/users/:id/delete') {
+        const t = await env.DB.prepare('SELECT role FROM users WHERE id=?').bind(id).first(); if (!t) return err('Not found', 404); if (t.role === 'admin') return err('Admin accounts can’t be deleted');
+        const live = await env.DB.prepare("SELECT COUNT(*) n FROM bookings WHERE (tourist_id=? OR guide_id=?) AND status IN ('requested','accepted','in_progress') AND pay_method='online' AND payout_status NOT IN ('pending','refunded')").bind(id, id).first().catch(() => ({ n: 0 }));
+        if (live?.n && !body.force) return err(`This user has ${live.n} active paid booking(s). Refund or finish them first, or delete anyway.`, 409);
+        const keys = (await env.DB.prepare('SELECT key FROM media WHERE user_id=? AND key IS NOT NULL').bind(id).all()).results;
+        if (env.FILES) for (const k of keys) await env.FILES.delete(k.key).catch(() => {});
+        const bq = 'SELECT id FROM bookings WHERE tourist_id=?1 OR guide_id=?1', oq = 'SELECT id FROM offers WHERE guide_id=?1 OR request_id IN (SELECT id FROM trip_requests WHERE tourist_id=?1)';
+        const qs = [`DELETE FROM messages WHERE booking_id IN (${bq}) OR sender_id=?1`, `DELETE FROM signals WHERE booking_id IN (${bq})`, `DELETE FROM reviews WHERE booking_id IN (${bq})`,
+          `DELETE FROM offer_msgs WHERE offer_id IN (${oq})`, `DELETE FROM offers WHERE id IN (${oq})`, 'DELETE FROM trip_requests WHERE tourist_id=?1',
+          'DELETE FROM bookings WHERE tourist_id=?1 OR guide_id=?1', 'DELETE FROM availability WHERE guide_id=?1', 'DELETE FROM blocks WHERE tourist_id=?1 OR guide_id=?1',
+          'DELETE FROM tickets WHERE user_id=?1', 'DELETE FROM invites WHERE guide_id=?1', 'DELETE FROM media WHERE user_id=?1', 'DELETE FROM resets WHERE user_id=?1',
+          'DELETE FROM admin_msgs WHERE user_id=?1', 'DELETE FROM sessions WHERE user_id=?1', 'DELETE FROM guides WHERE user_id=?1', 'DELETE FROM users WHERE id=?1'];
+        for (const q of qs) await env.DB.prepare(q).bind(id).run().catch(() => {});
+        return J({ ok: 1 });
+      }
+      if (route === 'GET /admin/dm/:id') {
+        await env.DB.prepare('UPDATE admin_msgs SET seen=1 WHERE user_id=? AND from_admin=0').bind(id).run();
+        return J({ items: await all('SELECT body,from_admin,created_at FROM admin_msgs WHERE user_id=? ORDER BY id', id) });
+      }
+      if (route === 'POST /admin/dm/:id') {
+        const t = String(body.body || '').trim().slice(0, 4000); if (!t) return err('Write a message');
+        await env.DB.prepare('INSERT INTO admin_msgs(user_id,from_admin,body) VALUES(?,1,?)').bind(id, t).run();
+        await notify(env, id, 'New message from TourGuyed', t.slice(0, 500) + '\n\nReply from your dashboard → Messages from TourGuyed.');
+        return J({ ok: 1 });
+      }
       if (route === 'POST /admin/users/:id/reset') return J({ link: await resetLink(env, id, url.origin) });
       if (route === 'GET /admin/payouts') return J({ items: (await all(`SELECT b.id,b.day,b.slot,b.amount,b.platform_fee,b.payout_status,b.guide_paid,b.status,b.currency,u.name guide_name,g.wise_email
           FROM bookings b JOIN users u ON u.id=b.guide_id JOIN guides g ON g.user_id=b.guide_id WHERE b.pay_method='online' AND b.payout_status IN('partial_released','released') ORDER BY b.id DESC`))
