@@ -59,8 +59,8 @@ function renderMenu() {
   const r = ME?.user.role, cur = location.hash.split('?')[0];
   const items = !ME ? [['#/start', 'Get started'], ['#/guides', 'Browse guides'], ['#/login', 'Sign in'], ['#/signup', 'Sign up']]
     : r === 'admin' ? [['#/admin', 'Overview'], ['#/admin-verify', 'Verify IDs & media'], ['#/admin-chats', 'All messages'], ['#/admin-tickets', 'Support tickets'], ['#/admin-users', 'Users'], ['#/admin-bookings', 'Bookings & fees'], ['#/admin-payouts', 'Guide payouts']]
-    : r === 'guide' ? [['#/dashboard', 'Dashboard'], ['#/requests', '🧳 Tourist requests'], ['#/offers', 'My offers'], ['#/bookings', 'Bookings'], ['#/messages', 'Messages'], ['#/availability', 'Availability'], ['#/profile', 'My profile & package'], ['#/invite', 'Invite guides'], ['#/support', 'Customer service']]
-    : [['#/dashboard', 'Dashboard'], ['#/plans', '🗺 My trip plans'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'Verify ID'], ['#/support', 'Customer service']];
+    : r === 'guide' ? [['#/dashboard', 'Dashboard'], ['#/requests', '🧳 Tourist requests'], ['#/offers', 'My offers'], ['#/bookings', 'Bookings'], ['#/messages', 'Messages'], ['#/availability', 'Availability'], ['#/profile', 'My profile & package'], ['#/invite', 'Invite guides'], ['#/inbox', 'Messages from TourGuyed' + (ME.user.inbox_unread ? ` (${ME.user.inbox_unread})` : '')], ['#/support', 'Customer service']]
+    : [['#/dashboard', 'Dashboard'], ['#/plans', '🗺 My trip plans'], ['#/guides', 'Find guides'], ['#/bookings', 'My bookings'], ['#/messages', 'Messages'], ['#/profile', 'My profile'], ...(ME.user.inbox ? [['#/inbox', 'Messages from TourGuyed' + (ME.user.inbox_unread ? ` (${ME.user.inbox_unread})` : '')]] : []), ['#/support', 'Customer service']];
   const mode = r === 'guide' ? `<div class="mode guide"><small>You're in</small><b>🧭 Tourguide mode</b><button class="switch" data-to="tourist">Switch to Tourist mode →</button></div>`
     : r === 'tourist' ? `<div class="mode tourist"><small>You're in</small><b>🎒 Tourist mode</b><button class="switch" data-to="guide">${ME.user.has_guide ? 'Switch to Tourguide mode →' : 'Become a tourguide →'}</button></div>`
     : r === 'admin' ? `<div class="mode admin"><small>You're in</small><b>🛡 Admin</b></div>` : '';
@@ -358,6 +358,14 @@ const views = {
     $('#b').onclick = async () => { await api('/support', { method: 'POST', body: { subject: $('#s').value, body: $('#d').value } }); toast('Sent — our team will reply by email'); $('#d').value = ''; };
   },
 
+  async inbox() {
+    if (!need()) return; const { items } = await api('/inbox');
+    V().innerHTML = `<h1>Messages from TourGuyed</h1><p class="muted">Direct messages between you and the TourGuyed team.</p><div class="panel" style="max-width:640px">${dmThread(items, false)}
+      <textarea id="dm" rows="3" placeholder="Reply to TourGuyed…" style="margin-top:12px"></textarea><button class="btn" style="margin-top:8px" id="dms">Send</button></div>`;
+    $('#dms').onclick = async () => { try { await api('/inbox', { method: 'POST', body: { body: $('#dm').value } }); toast('Sent'); route(); } catch (e) { toast(e.message) } };
+    if (ME.user.inbox_unread) loadMe();
+  },
+
   // ---------- trip plans (tourist) ----------
   async plans() {
     if (!need('tourist')) return;
@@ -516,9 +524,54 @@ const views = {
   },
   async 'admin-users'() {
     if (!need('admin')) return; const { items } = await api('/admin/users');
-    V().innerHTML = `<h1>Users</h1><table><tr><th>Name</th><th>Email</th><th>Role</th><th>ID</th><th>Rating</th><th>Joined</th><th></th></tr>${items.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td>
-      <td><span class="status ${u.id_status === 'verified' ? 's-completed' : u.id_status === 'pending' ? 's-requested' : 's-declined'}">${u.id_status}</span></td><td>${u.role === 'guide' ? `★ ${u.rating} (${u.reviews})` : '—'}</td><td>${(u.created_at || '').slice(0, 10)}</td><td><button class="btn sm ghost" data-rs="${u.id}">Reset link</button></td></tr>`).join('')}</table>`;
+    V().innerHTML = `<h1>Users</h1><input id="uq" placeholder="Search name or email…" style="max-width:320px;margin-bottom:12px"><table id="ut"><tr><th>Name</th><th>Email</th><th>Role</th><th>ID</th><th>Rating</th><th>Joined</th><th></th></tr>${items.map(u => `<tr data-q="${esc((u.name + ' ' + u.email).toLowerCase())}"><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.role}</td>
+      <td><span class="status ${u.id_status === 'verified' ? 's-completed' : u.id_status === 'pending' ? 's-requested' : 's-declined'}">${u.id_status}</span></td><td>${u.role === 'guide' ? `★ ${u.rating} (${u.reviews})` : '—'}</td><td>${(u.created_at || '').slice(0, 10)}</td>
+      <td style="white-space:nowrap"><a class="btn sm" href="#/admin-user?id=${u.id}">Edit</a> <a class="btn sm ghost" href="#/admin-dm?id=${u.id}">Message${u.unread ? ` (${u.unread})` : ''}</a> <button class="btn sm ghost" data-rs="${u.id}">Reset link</button> <button class="btn sm ghost" style="color:#c0392b" data-del="${u.id}" data-n="${esc(u.name)}">Delete</button></td></tr>`).join('')}</table>`;
+    $('#uq').oninput = () => { const q = $('#uq').value.toLowerCase(); document.querySelectorAll('#ut tr[data-q]').forEach(r => r.style.display = r.dataset.q.includes(q) ? '' : 'none'); };
     document.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => { const d = await api('/admin/users/' + b.dataset.rs + '/reset', { method: 'POST' }); modal(`<h3>Password reset link</h3><p class="muted">Send this to the user. It works once and expires in 1 hour.</p><input value="${esc(d.link)}" onclick="this.select()" readonly>`); });
+    document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => adminDelete(b.dataset.del, b.dataset.n));
+  },
+  async 'admin-user'() {
+    if (!need('admin')) return; const uid = +qs().id; const { user, guide } = await api('/admin/users/' + uid); const g = guide || {};
+    const L = x => { try { return (Array.isArray(x) ? x : JSON.parse(x || '[]')).join(', ') } catch { return '' } };
+    const inp = (k, label, v, t = 'text') => `<label>${label}</label><input id="g_${k}" type="${t}" value="${esc(v ?? '')}">`;
+    const isG = user.role === 'guide' || guide;
+    V().innerHTML = `<p><a href="#/admin-users">← All users</a></p><h1>Edit ${esc(user.name)}</h1><p class="muted">${user.role} · joined ${(user.created_at || '').slice(0, 10)}</p>
+      <div class="panel"><h3>Account</h3><div class="two" style="gap:12px"><div><label>Name</label><input id="u_name" value="${esc(user.name)}"></div><div><label>Email</label><input id="u_email" type="email" value="${esc(user.email)}"></div></div>
+      <label>ID status</label><select id="u_ids">${['none', 'pending', 'verified', 'rejected'].map(x => `<option ${user.id_status === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      ${isG ? `<div class="panel"><h3>Tourguide profile & package</h3><label style="font-weight:400"><input type="checkbox" id="g_verified" ${g.verified ? 'checked' : ''}> Verified guide (shown publicly)</label>
+      <div class="two" style="gap:16px;align-items:start"><div>
+      <label>Short bio</label><textarea id="g_bio" rows="4">${esc(g.bio || '')}</textarea>
+      ${inp('gender', 'Gender', g.gender)}${inp('occupation', 'Occupation', g.occupation)}
+      <label>Student?</label><select id="g_is_student"><option value="0">No</option><option value="1" ${g.is_student ? 'selected' : ''}>Yes</option></select>
+      ${inp('school', 'School', g.school)}<label style="font-weight:400"><input type="checkbox" id="g_school_permission" ${g.school_permission ? 'checked' : ''}> Has school permission</label>
+      ${inp('photo', 'Profile photo URL', g.photo)}${inp('wise_email', 'Wise email', g.wise_email, 'email')}
+      </div><div>
+      <div class="two" style="gap:10px">${inp('country', 'Country', g.country)}${inp('location', 'City / area', g.location)}</div>
+      ${inp('places', 'Places (comma separated)', L(g.places))}${inp('activities', 'Expertise (comma separated)', L(g.activities))}${inp('languages', 'Languages (comma separated)', L(g.languages))}
+      ${inp('transport', 'Transport', g.transport)}${inp('package_title', 'Package name', g.package_title)}
+      <div class="two" style="gap:10px;grid-template-columns:1fr 1fr 1fr">${inp('currency', 'Currency', g.currency)}${inp('price', 'Price', g.price, 'number')}${inp('duration_hours', 'Hours', g.duration_hours, 'number')}</div>
+      ${inp('includes', 'Included (comma separated)', L(g.includes))}${inp('excludes', 'Not included (comma separated)', L(g.excludes))}
+      ${inp('tz', 'Time zone', g.tz)}<label style="font-weight:400"><input type="checkbox" id="g_offers_local" ${g.offers_local ? 'checked' : ''}> Can arrange other local guides</label>
+      </div></div></div>` : ''}
+      <p style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" id="sv">Save changes</button><a class="btn ghost" href="#/admin-dm?id=${uid}">Message</a><button class="btn ghost" style="color:#c0392b" id="dl">Delete account</button></p>`;
+    $('#dl').onclick = () => adminDelete(uid, user.name);
+    $('#sv').onclick = async () => {
+      const body = { name: $('#u_name').value, email: $('#u_email').value, id_status: $('#u_ids').value };
+      if (isG) {
+        const v = k => $('#g_' + k).value, arr = k => v(k).split(',').map(x => x.trim()).filter(Boolean), chk = k => $('#g_' + k).checked ? 1 : 0;
+        body.guide = { verified: chk('verified'), school_permission: chk('school_permission'), offers_local: chk('offers_local'), is_student: +v('is_student'), price: +v('price'), duration_hours: +v('duration_hours'), currency: v('currency').toUpperCase() };
+        ['bio', 'gender', 'occupation', 'school', 'photo', 'wise_email', 'country', 'location', 'transport', 'package_title', 'tz'].forEach(k => body.guide[k] = v(k));
+        ['places', 'activities', 'languages', 'includes', 'excludes'].forEach(k => body.guide[k] = arr(k));
+      }
+      try { await api('/admin/users/' + uid, { method: 'PUT', body }); toast('✓ Saved'); } catch (e) { toast(e.message) }
+    };
+  },
+  async 'admin-dm'() {
+    if (!need('admin')) return; const uid = +qs().id; const [{ user }, { items }] = await Promise.all([api('/admin/users/' + uid), api('/admin/dm/' + uid)]);
+    V().innerHTML = `<p><a href="#/admin-users">← All users</a></p><h1>Message ${esc(user.name)}</h1><p class="muted">${user.role} · ${esc(user.email)} — they see this under “Messages from TourGuyed”${''} and can reply.</p>
+      <div class="panel" style="max-width:640px">${dmThread(items, true)}<textarea id="dm" rows="3" placeholder="Write a message…" style="margin-top:12px"></textarea><button class="btn" style="margin-top:8px" id="dms">Send</button></div>`;
+    $('#dms').onclick = async () => { try { await api('/admin/dm/' + uid, { method: 'POST', body: { body: $('#dm').value } }); toast('Sent'); route(); } catch (e) { toast(e.message) } };
   },
   async 'admin-payouts'() {
     if (!need('admin')) return; const { items } = await api('/admin/payouts');
@@ -560,6 +613,17 @@ async function upload(kind, f) {
   if (isImg) { try { dataUrl = await shrinkImage(f); if (dataUrl.length > 1.8e6) dataUrl = await shrinkImage(f, 1100, 0.7); } catch { throw new Error(`Couldn't read "${f.name}". Please use a JPG or PNG photo (on iPhone: Settings → Camera → Formats → Most Compatible).`); } }
   else { if (f.size > 1.3e6) throw new Error(isVid ? 'Videos must be under 1MB for now — trim it or upload photos instead' : 'File must be under 1MB — take a photo of it instead'); dataUrl = await fileToDataUrl(f); }
   return api('/upload', { method: 'POST', body: { kind, name: f.name.replace(/\.\w+$/, '') + (isImg ? '.jpg' : ''), dataUrl } });
+}
+function dmThread(items, asAdmin) {
+  if (!items.length) return '<p class="muted">No messages yet.</p>';
+  return '<div style="display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto">' + items.map(m => { const mine = asAdmin ? m.from_admin : !m.from_admin;
+    return `<div style="align-self:${mine ? 'flex-end' : 'flex-start'};max-width:80%;background:${mine ? 'var(--teal,#0f766e)' : '#eef4f3'};color:${mine ? '#fff' : 'inherit'};padding:8px 12px;border-radius:12px;white-space:pre-wrap">${esc(m.body)}<div style="font-size:11px;opacity:.7;margin-top:4px">${m.from_admin ? 'TourGuyed' : 'User'} · ${esc((m.created_at || '').slice(0, 16))} UTC</div></div>`; }).join('') + '</div>';
+}
+async function adminDelete(id, name) {
+  if (!confirm(`Permanently delete ${name}'s account? This removes their profile, uploads, bookings, messages and requests. It can't be undone.`)) return;
+  try { await api('/admin/users/' + id + '/delete', { method: 'POST', body: {} }); }
+  catch (e) { if (!/active paid booking/.test(e.message) || !confirm(e.message + '\n\nDelete anyway?')) return toast(e.message); await api('/admin/users/' + id + '/delete', { method: 'POST', body: { force: 1 } }); }
+  toast('Account deleted'); location.hash = '#/admin-users';
 }
 function wireId() { $('#idf').onchange = async () => { const f = $('#idf').files[0]; if (!f) return; $('#idmsg').textContent = '⏳ Uploading ' + f.name + '…'; try { await upload('id', f); await loadMe(); toast('✓ ID uploaded — waiting for review'); route(); } catch (e) { $('#idmsg').textContent = '✗ ' + e.message; toast(e.message); } }; }
 
