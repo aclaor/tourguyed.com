@@ -300,6 +300,12 @@ export async function onRequest({ request: req, env, params }) {
       if (g) await env.DB.prepare('UPDATE guides SET media=? WHERE user_id=?').bind(JSON.stringify(arr(g.media).filter(x => x !== `/api/media/${id}`)), u.id).run();
       return J({ ok: 1 });
     }
+    if (route === 'PUT /me/name') {
+      const name = String(body.name || '').replace(/\s+/g, ' ').trim();
+      if (name.length < 2 || name.length > 80) return err('Name must be 2–80 characters');
+      await env.DB.prepare('UPDATE users SET name=? WHERE id=?').bind(name, u.id).run();
+      return J({ ok: 1, name });
+    }
     if ((route === 'POST /switch-role' || route === 'POST /become-guide') && u.role !== 'admin') {
       const to = route === 'POST /become-guide' ? 'guide' : body.to;
       if (!['tourist', 'guide'].includes(to)) return err('Bad role');

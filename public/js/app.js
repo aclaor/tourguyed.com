@@ -270,13 +270,15 @@ const views = {
     if (!need()) return;
     const idBox = `<div class="panel"><h3>Identity verification</h3><p class="muted">Status: <b>${{ none: 'not uploaded yet', pending: 'uploaded — waiting for review', verified: '✓ verified', rejected: 'rejected — please upload a clearer photo' }[ME.user.id_status] || ME.user.id_status}</b>. Your ID is stored privately and never shown to ${ME.user.role === 'guide' ? 'tourists' : 'guides'} — they only see a verified badge.</p>
       <label>${ME.user.id_status === 'none' || ME.user.id_status === 'rejected' ? 'Choose a photo of your government or school ID — it uploads automatically' : 'Replace your ID (optional)'} <span class="req">*</span></label><input type="file" id="idf" accept="image/*${ME.user.storage === 'r2' ? ',application/pdf' : ''}"><p id="idmsg" class="muted" style="margin-top:6px"></p></div>`;
-    if (ME.user.role === 'tourist') { V().innerHTML = '<h1>Verify ID</h1>' + idBox + `<p class="muted">Guides contact you via your private relay address: ${esc(ME.user.relay)}</p>
+    const nameBox = `<div class="panel"><h3>Your name</h3><p class="muted">Shown as first name + last initial until a booking is confirmed.</p><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input id="nm" value="${esc(ME.user.name || '')}" maxlength="80" style="flex:1;min-width:200px"><button class="btn" id="nms">Save name</button></div><p id="nmmsg" class="muted" style="margin-top:6px"></p></div>`;
+    const wireName = () => { $('#nms').onclick = async () => { try { const r = await api('/me/name', { method: 'PUT', body: { name: $('#nm').value } }); ME.user.name = r.name; $('#nmmsg').textContent = '✓ Saved'; renderMenu(); } catch (e) { $('#nmmsg').textContent = e.message; } }; };
+    if (ME.user.role === 'tourist') { V().innerHTML = '<h1>My profile</h1>' + nameBox + idBox + `<p class="muted">Guides contact you via your private relay address: ${esc(ME.user.relay)}</p>
       <div class="panel"><h3>Want to be a tourguide too?</h3><p class="muted">Use the same account. Set up your guide profile, and switch between Tourist and Tourguide mode anytime from the menu.</p><button class="btn" style="margin-top:12px" id="bg">${ME.user.has_guide ? 'Switch to Tourguide mode' : 'Become a tourguide'}</button></div>`;
       $('#bg').onclick = () => switchRole('guide');
-      return wireId(); }
+      wireName(); return wireId(); }
     const g = ME.guide, L = a => (a || []).join(', ');
     const R = '<span class="req">*</span>';
-    V().innerHTML = `<h1>My profile & package</h1>${idBox}<div class="panel"><p class="muted" style="margin-bottom:6px">Fields marked ${R} are required.</p><div class="two" style="gap:16px;align-items:start"><div>
+    V().innerHTML = `<h1>My profile & package</h1>${nameBox}${idBox}<div class="panel"><p class="muted" style="margin-bottom:6px">Fields marked ${R} are required.</p><div class="two" style="gap:16px;align-items:start"><div>
       <label>Profile photo ${R}</label><div style="display:flex;gap:12px;align-items:center">${g.photo ? `<img src="${esc(g.photo)}" style="width:64px;height:64px;border-radius:50%;border:2px solid #fff">` : ''}<input type="file" id="pf" accept="image/*"></div>
       <label>Short bio ${R}</label><textarea id="bio" rows="3" required>${esc(g.bio)}</textarea>
       <label>Gender ${R}</label><select id="gender" required><option value="">Select…</option>${['Female', 'Male', 'Other'].map(x => `<option ${g.gender === x ? 'selected' : ''}>${x}</option>`)}</select>
@@ -301,7 +303,7 @@ const views = {
       <button class="btn" style="margin-top:16px" id="save">Save profile</button></div>
       <div class="panel"><h3>Tour videos & photos</h3><p class="muted">Show tourists the places you take them — proof you know the spot. Photos are resized automatically. ${ME.user.storage === 'r2' ? 'Videos up to 50MB, max 30 uploads.' : 'Videos must be under 1MB for now.'}</p><input type="file" id="mf" accept="video/*,image/*,.heic,.mov" multiple><button class="btn sm" style="margin-top:8px;display:none" id="mb">Upload</button><p id="mmsg" class="muted" style="margin-top:6px">Pick one or more files — they upload automatically.</p>
       <h3 style="margin-top:22px;font-size:18px">My uploads</h3><div id="gal" class="grid4" style="margin-top:12px"><p class="muted">Loading…</p></div></div>`;
-    wireId();
+    wireId(); wireName();
     const stu = () => { const on = $('#is_student').value === '1'; $('#stu').style.display = on ? '' : 'none'; $('#school').required = on; }; $('#is_student').onchange = stu; stu();
     $('#pf').onchange = async () => { try { await upload('profile', $('#pf').files[0]); await loadMe(); toast('Profile photo updated'); route(); } catch (e) { toast(e.message) } };
     $('#save').onclick = async () => {
